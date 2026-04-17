@@ -17,7 +17,7 @@ func DetectIdentity() (Identity, error) {
 		return Identity{}, err
 	}
 	cmd := exec.Command("hf", "auth", "whoami", "--format", "json")
-	out, err := cmd.CombinedOutput()
+	out, err := cmd.Output()
 	if err != nil {
 		return Identity{}, err
 	}
