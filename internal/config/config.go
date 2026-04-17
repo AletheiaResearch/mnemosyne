@@ -153,10 +153,15 @@ func Save(path string, cfg Config) error {
 	}
 
 	tmp := fmt.Sprintf("%s.%d.tmp", path, time.Now().UnixNano())
-	if err := os.WriteFile(tmp, payload, 0o644); err != nil {
+	if err := os.WriteFile(tmp, payload, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	defer os.Remove(tmp)
+
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }
 
 func (c Config) marshal() ([]byte, error) {

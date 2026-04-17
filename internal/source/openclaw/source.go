@@ -94,7 +94,12 @@ func (s *Source) Extract(ctx context.Context, grouping source.Grouping, _ source
 		if err != nil {
 			continue
 		}
-		if record.WorkingDir != grouping.ID && grouping.ID != source.EstimateUnknownLabel(s.Name()) {
+		switch {
+		case grouping.ID == source.EstimateUnknownLabel(s.Name()):
+			if strings.TrimSpace(record.WorkingDir) != "" {
+				continue
+			}
+		case record.WorkingDir != grouping.ID:
 			continue
 		}
 		record.Grouping = grouping.DisplayLabel

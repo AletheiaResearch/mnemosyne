@@ -185,7 +185,7 @@ func (s *Source) extractSession(db *sql.DB, schemaInfo dbSchema, sessionID, repo
 	record := schema.Record{
 		RecordID: sessionID,
 		Origin:   s.Name(),
-		Model:    firstNonEmpty(model, "orchestrator/unknown"),
+		Model:    strings.TrimSpace(model),
 		Branch:   branch,
 		Title:    title,
 		Turns:    make([]schema.Turn, 0),
@@ -216,7 +216,7 @@ func (s *Source) extractSession(db *sql.DB, schemaInfo dbSchema, sessionID, repo
 			Text:      content,
 		}
 		if messageModel.Valid && messageModel.String != "" {
-			record.Model = firstNonEmpty(record.Model, messageModel.String)
+			record.Model = firstNonEmpty(messageModel.String, record.Model)
 		}
 		if payloadRaw.Valid && payloadRaw.String != "" {
 			decodeOrchestratorPayload(payloadRaw.String, &turn)
@@ -234,6 +234,7 @@ func (s *Source) extractSession(db *sql.DB, schemaInfo dbSchema, sessionID, repo
 		AssistantTurns: source.CountTurns(record.Turns, "assistant"),
 		ToolCalls:      source.CountToolCalls(record.Turns),
 	}
+	record.Model = firstNonEmpty(record.Model, "orchestrator/unknown")
 	record.Grouping = "orchestrator:" + repoDisplayName(repoLabel)
 	return record, nil
 }

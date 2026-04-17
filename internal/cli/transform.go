@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -44,29 +45,7 @@ func newTransformCommand(rt *runtime) *cobra.Command {
 			}
 			defer out.Close()
 
-			scanner := bufio.NewScanner(in)
-			scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
-			writer := bufio.NewWriter(out)
-			defer writer.Flush()
-
-			for scanner.Scan() {
-				var record schema.Record
-				if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
-					return err
-				}
-				payload, err := serializer.Serialize(record)
-				if err != nil {
-					return err
-				}
-				data, err := json.Marshal(payload)
-				if err != nil {
-					return err
-				}
-				if _, err := writer.Write(append(data, '\n')); err != nil {
-					return err
-				}
-			}
-			return scanner.Err()
+			return transformRecords(in, out, serializer)
 		},
 	}
 
@@ -74,4 +53,32 @@ func newTransformCommand(rt *runtime) *cobra.Command {
 	cmd.Flags().StringVar(&output, "output", "", "path to transformed output")
 	cmd.Flags().StringVar(&format, "format", "canonical", "serializer to use")
 	return cmd
+}
+
+func transformRecords(in io.Reader, out io.Writer, serializer serialize.Serializer) error {
+	scanner := bufio.NewScanner(in)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	writer := bufio.NewWriter(out)
+
+	for scanner.Scan() {
+		var record schema.Record
+		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+			return err
+		}
+		payload, err := serializer.Serialize(record)
+		if err != nil {
+			return err
+		}
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		if _, err := writer.Write(append(data, '\n')); err != nil {
+			return err
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	return writer.Flush()
 }
