@@ -2,13 +2,16 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -113,59 +116,32 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 			}
 			seenRecordIDs := make(map[string]struct{})
 			seenWarnings := make(map[string]struct{})
+			var warnMu sync.Mutex
+			addWarning := func(message string) {
+				message = strings.TrimSpace(message)
+				if message == "" {
+					return
+				}
+				warnMu.Lock()
+				defer warnMu.Unlock()
+				if _, exists := seenWarnings[message]; exists {
+					return
+				}
+				seenWarnings[message] = struct{}{}
+				summary.Warnings = append(summary.Warnings, message)
+			}
 
-			for _, selection := range selections {
-				extractCtx := source.ExtractionContext{
-					Logger:            rt.logger,
-					SuppressReasoning: suppressReasoning,
-					Warn: func(message string) {
-						message = strings.TrimSpace(message)
-						if message == "" {
-							return
-						}
-						if _, exists := seenWarnings[message]; exists {
-							return
-						}
-						seenWarnings[message] = struct{}{}
-						summary.Warnings = append(summary.Warnings, message)
-					},
-				}
-				err := selection.src.Extract(cmd.Context(), selection.grouping, extractCtx, func(record schema.Record) error {
-					if suppressReasoning {
-						for idx := range record.Turns {
-							record.Turns[idx].Reasoning = ""
-						}
-					}
-					redacted, count := pipeline.ApplyRecord(record)
-					if err := schema.ValidateRecord(redacted); err != nil {
-						summary.SkippedRecords++
-						rt.logger.Debug("skip invalid record", "record_id", record.RecordID, "error", err)
-						return nil
-					}
-					if _, exists := seenRecordIDs[redacted.RecordID]; exists {
-						summary.SkippedRecords++
-						rt.logger.Debug("skip duplicate record", "record_id", redacted.RecordID, "origin", redacted.Origin)
-						return nil
-					}
-					seenRecordIDs[redacted.RecordID] = struct{}{}
-					data, err := json.Marshal(redacted)
-					if err != nil {
-						return err
-					}
-					if _, err := writer.Write(append(data, '\n')); err != nil {
-						return err
-					}
-					summary.RecordCount++
-					summary.RedactionCount += count
-					summary.InputTokens += redacted.Usage.InputTokens
-					summary.OutputTokens += redacted.Usage.OutputTokens
-					updateBreakdown(summary.PerModel, redacted.Model, redacted)
-					updateBreakdown(summary.PerGrouping, redacted.Grouping, redacted)
-					return nil
-				})
-				if err != nil {
-					return err
-				}
+			if err := runExtraction(cmd.Context(), runExtractionArgs{
+				rt:                rt,
+				selections:        selections,
+				pipeline:          pipeline,
+				suppressReasoning: suppressReasoning,
+				writer:            writer,
+				summary:           &summary,
+				seenRecordIDs:     seenRecordIDs,
+				addWarning:        addWarning,
+			}); err != nil {
+				return err
 			}
 
 			if err := writer.Flush(); err != nil {
@@ -240,19 +216,36 @@ func discoverSelections(cmd *cobra.Command, selected []source.Source, cfg config
 		excluded[item] = struct{}{}
 	}
 
+	type discovery struct {
+		src       source.Source
+		groupings []source.Grouping
+		err       error
+	}
+	results := make([]discovery, len(selected))
+	var wg sync.WaitGroup
+	for i, src := range selected {
+		i, src := i, src
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			groupings, err := src.Discover(cmd.Context())
+			results[i] = discovery{src: src, groupings: groupings, err: err}
+		}()
+	}
+	wg.Wait()
+
 	out := make([]sourceSelection, 0)
-	for _, src := range selected {
-		groupings, err := src.Discover(cmd.Context())
-		if err != nil {
-			return nil, err
+	for _, r := range results {
+		if r.err != nil {
+			return nil, r.err
 		}
-		for _, grouping := range groupings {
+		for _, grouping := range r.groupings {
 			if !includeAll {
 				if _, skip := excluded[grouping.DisplayLabel]; skip {
 					continue
 				}
 			}
-			out = append(out, sourceSelection{src: src, grouping: grouping})
+			out = append(out, sourceSelection{src: r.src, grouping: grouping})
 		}
 	}
 	return out, nil
@@ -280,4 +273,162 @@ func sourcePriority(name string) int {
 		return 0
 	}
 	return 1
+}
+
+type runExtractionArgs struct {
+	rt                *runtime
+	selections        []sourceSelection
+	pipeline          *redact.Pipeline
+	suppressReasoning bool
+	writer            *bufio.Writer
+	summary           *extractSummary
+	seenRecordIDs     map[string]struct{}
+	addWarning        func(string)
+}
+
+type emitted struct {
+	record     schema.Record
+	data       []byte
+	redactions int
+	invalid    bool
+}
+
+func runExtraction(parent context.Context, args runExtractionArgs) error {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+
+	workers := extractionConcurrency(len(args.selections))
+	out := make(chan emitted, workers*4)
+	sem := make(chan struct{}, workers)
+
+	var wg sync.WaitGroup
+	var firstErr errOnce
+	progress := newExtractProgress(len(args.selections))
+	stopProgress := progress.run(args.rt.stderr)
+	defer stopProgress()
+
+	for _, selection := range args.selections {
+		selection := selection
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-sem }()
+
+			extractCtx := source.ExtractionContext{
+				Logger:            args.rt.logger,
+				SuppressReasoning: args.suppressReasoning,
+				Warn:              args.addWarning,
+			}
+
+			err := selection.src.Extract(ctx, selection.grouping, extractCtx, func(record schema.Record) error {
+				if args.suppressReasoning {
+					for idx := range record.Turns {
+						record.Turns[idx].Reasoning = ""
+					}
+				}
+				redacted, count := args.pipeline.ApplyRecord(record)
+				if err := schema.ValidateRecord(redacted); err != nil {
+					args.rt.logger.Debug("skip invalid record", "record_id", record.RecordID, "error", err)
+					return sendEmitted(ctx, out, emitted{invalid: true})
+				}
+				data, err := json.Marshal(redacted)
+				if err != nil {
+					return err
+				}
+				return sendEmitted(ctx, out, emitted{record: redacted, data: data, redactions: count})
+			})
+			if err != nil && !errors.Is(err, context.Canceled) {
+				firstErr.Store(err)
+				cancel()
+				return
+			}
+			progress.completeSelection()
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(out)
+	}()
+
+	for rec := range out {
+		if rec.invalid {
+			args.summary.SkippedRecords++
+			continue
+		}
+		if _, exists := args.seenRecordIDs[rec.record.RecordID]; exists {
+			args.summary.SkippedRecords++
+			args.rt.logger.Debug("skip duplicate record", "record_id", rec.record.RecordID, "origin", rec.record.Origin)
+			continue
+		}
+		args.seenRecordIDs[rec.record.RecordID] = struct{}{}
+		if _, err := args.writer.Write(append(rec.data, '\n')); err != nil {
+			firstErr.Store(err)
+			cancel()
+			continue
+		}
+		args.summary.RecordCount++
+		args.summary.RedactionCount += rec.redactions
+		args.summary.InputTokens += rec.record.Usage.InputTokens
+		args.summary.OutputTokens += rec.record.Usage.OutputTokens
+		updateBreakdown(args.summary.PerModel, rec.record.Model, rec.record)
+		updateBreakdown(args.summary.PerGrouping, rec.record.Grouping, rec.record)
+		progress.addRecord(rec.redactions)
+	}
+
+	if err := firstErr.Load(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func sendEmitted(ctx context.Context, out chan<- emitted, rec emitted) error {
+	select {
+	case out <- rec:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+type errOnce struct {
+	mu  sync.Mutex
+	err error
+}
+
+func (e *errOnce) Store(err error) {
+	if err == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.err == nil {
+		e.err = err
+	}
+}
+
+func (e *errOnce) Load() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.err
+}
+
+func extractionConcurrency(selections int) int {
+	n := goruntime.NumCPU()
+	if n < 2 {
+		n = 2
+	}
+	if n > 8 {
+		n = 8
+	}
+	if selections > 0 && n > selections {
+		n = selections
+	}
+	return n
 }
