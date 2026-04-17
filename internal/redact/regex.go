@@ -144,9 +144,25 @@ func replacePattern(input string, pattern replacementPattern) (string, int) {
 
 func allowEmail(value string) bool {
 	lower := strings.ToLower(value)
-	return strings.Contains(lower, "@example.") ||
-		strings.HasSuffix(lower, "@localhost") ||
-		strings.HasPrefix(lower, "noreply@")
+	at := strings.LastIndex(lower, "@")
+	if at < 0 {
+		return false
+	}
+	return isReservedEmailDomain(lower[at+1:])
+}
+
+func isReservedEmailDomain(domain string) bool {
+	if domain == "" {
+		return false
+	}
+	switch domain {
+	case "localhost", "example.com", "example.org", "example.net":
+		return true
+	}
+	return strings.HasSuffix(domain, ".localhost") ||
+		strings.HasSuffix(domain, ".example") ||
+		strings.HasSuffix(domain, ".test") ||
+		strings.HasSuffix(domain, ".invalid")
 }
 
 func allowIP(value string) bool {
