@@ -56,13 +56,44 @@ func (s *Source) Discover(context.Context) ([]source.Grouping, error) {
 		}
 		groupings = append(groupings, source.Grouping{
 			ID:               entry.Name(),
-			DisplayLabel:     "claudecode:" + decodeProjectName(entry.Name()),
+			DisplayLabel:     "claudecode:" + s.groupingLabel(files, entry.Name()),
 			Origin:           s.Name(),
 			EstimatedRecords: len(files),
 			EstimatedBytes:   bytes,
 		})
 	}
 	return groupings, nil
+}
+
+func (s *Source) groupingLabel(files []string, dirName string) string {
+	cwd := probeCwd(files)
+	if cwd != "" {
+		if base := filepath.Base(cwd); base != "." && base != string(filepath.Separator) {
+			return base
+		}
+	}
+	return decodeProjectName(dirName)
+}
+
+func probeCwd(files []string) string {
+	for _, path := range files {
+		var found string
+		_ = source.ReadJSONLines(path, func(_ int, raw []byte) error {
+			line, err := source.DecodeJSONObject(raw)
+			if err != nil {
+				return nil
+			}
+			if cwd := source.ExtractString(line, "cwd"); cwd != "" {
+				found = cwd
+				return os.ErrClosed
+			}
+			return nil
+		})
+		if found != "" {
+			return found
+		}
+	}
+	return ""
 }
 
 func (s *Source) Extract(ctx context.Context, grouping source.Grouping, extractCtx source.ExtractionContext, emit func(schema.Record) error) error {
