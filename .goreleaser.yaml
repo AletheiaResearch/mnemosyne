@@ -32,6 +32,7 @@ brews:
   - repository:
       owner: AletheiaResearch
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Formula
     homepage: https://github.com/AletheiaResearch/mnemosyne
     description: Export coding-assistant histories to unified, anonymized archives.
