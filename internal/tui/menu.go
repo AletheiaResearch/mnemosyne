@@ -20,6 +20,7 @@ func newMenuModel() menuModel {
 			"extract",
 			"attest",
 			"publish",
+			"runlog",
 			"transform",
 			"validate",
 			"quit",

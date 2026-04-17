@@ -57,7 +57,7 @@ func newRootCommand(rt *runtime) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			model := tui.NewApp()
+			model := tui.NewApp(rt.configPath)
 			_, err := tea.NewProgram(model, tea.WithAltScreen()).Run()
 			return err
 		},

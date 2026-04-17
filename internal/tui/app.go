@@ -1,11 +1,6 @@
 package tui
 
-import (
-	"strings"
-
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-)
+import tea "github.com/charmbracelet/bubbletea"
 
 type screenKey string
 
@@ -27,14 +22,17 @@ type screenDescriptor struct {
 }
 
 type model struct {
-	screen screenKey
-	menu   menuModel
+	screen     screenKey
+	menu       menuModel
+	active     tea.Model
+	configPath string
 }
 
-func NewApp() tea.Model {
+func NewApp(configPath string) tea.Model {
 	return model{
-		screen: screenMenu,
-		menu:   newMenuModel(),
+		screen:     screenMenu,
+		menu:       newMenuModel(),
+		configPath: configPath,
 	}
 }
 
@@ -46,13 +44,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c":
+			return m, tea.Quit
+		case "q":
 			if m.screen == screenMenu {
 				return m, tea.Quit
 			}
-		case "esc", "backspace":
+		case "esc":
 			if m.screen != screenMenu {
 				m.screen = screenMenu
+				m.active = nil
 				return m, nil
 			}
 		case "enter":
@@ -62,7 +63,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Quit
 				}
 				m.screen = screenKey(selection)
-				return m, nil
+				m.active = newScreen(m.screen, m.configPath)
+				if m.active == nil {
+					m.screen = screenMenu
+					return m, nil
+				}
+				return m, m.active.Init()
 			}
 		}
 	}
@@ -72,40 +78,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.menu = updated.(menuModel)
 		return m, cmd
 	}
+	if m.active != nil {
+		updated, cmd := m.active.Update(msg)
+		m.active = updated
+		return m, cmd
+	}
 	return m, nil
 }
 
 func (m model) View() string {
-	if m.screen == screenMenu {
+	if m.screen == screenMenu || m.active == nil {
 		return m.menu.View()
 	}
-
-	screen := m.currentScreen()
-	title := lipgloss.NewStyle().Bold(true).Render(screen.Title)
-	body := lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Render(screen.Body)
-	footer := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Press esc to return to the menu.")
-	return strings.Join([]string{title, "", body, "", footer}, "\n")
-}
-
-func (m model) currentScreen() screenDescriptor {
-	switch m.screen {
-	case screenSurvey:
-		return surveyScreen()
-	case screenConfigure:
-		return configureScreen()
-	case screenExtract:
-		return extractScreen()
-	case screenAttest:
-		return reviewScreen()
-	case screenPublish:
-		return publishScreen()
-	case screenRunlog:
-		return runlogScreen()
-	case screenTransform:
-		return transformScreen()
-	case screenValidate:
-		return validateScreen()
-	default:
-		return screenDescriptor{Title: "Mnemosyne", Body: "Select a workflow step from the menu."}
-	}
+	return m.active.View()
 }
