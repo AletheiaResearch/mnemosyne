@@ -230,12 +230,15 @@ func assembleClaudeRecord(entries []map[string]any, recordID string) schema.Reco
 				case "text":
 					turn.Text += source.ExtractString(block, "text")
 				case "thinking":
-					if turn.Reasoning != "" {
-						turn.Reasoning += "\n"
+					thinkingText := source.ExtractString(block, "thinking")
+					if thinkingText == "" {
+						thinkingText = source.ExtractString(block, "text")
 					}
-					turn.Reasoning += source.ExtractString(block, "thinking")
-					if turn.Reasoning == "" {
-						turn.Reasoning += source.ExtractString(block, "text")
+					if thinkingText != "" {
+						if turn.Reasoning != "" {
+							turn.Reasoning += "\n"
+						}
+						turn.Reasoning += thinkingText
 					}
 				case "tool_use":
 					call := schema.ToolCall{

@@ -1,7 +1,6 @@
 package publish
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,8 +35,6 @@ func DetectIdentity() (Identity, error) {
 
 func EnsureDatasetRepo(repoID string) error {
 	cmd := exec.Command("hf", "repos", "create", repoID, "--repo-type", "dataset", "--exist-ok")
-	cmd.Stdout = &bytes.Buffer{}
-	cmd.Stderr = &bytes.Buffer{}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%w: %s", err, string(out))
 	}

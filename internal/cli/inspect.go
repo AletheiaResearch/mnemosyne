@@ -13,7 +13,7 @@ import (
 func newInspectCommand(rt *runtime) *cobra.Command {
 	var scope string
 
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "inspect",
 		Short: "Enumerate detected groupings for a source scope",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -52,4 +52,6 @@ func newInspectCommand(rt *runtime) *cobra.Command {
 			return printJSON(cmd.OutOrStdout(), groupings)
 		},
 	}
+	cmd.Flags().StringVar(&scope, "scope", "", "source scope to inspect, or 'all'")
+	return cmd
 }

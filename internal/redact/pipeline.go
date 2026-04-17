@@ -238,15 +238,11 @@ func stringsReplaceAll(input, needle, repl string) (string, int) {
 	if needle == "" {
 		return input, 0
 	}
-	count := 0
-	for {
-		idx := strings.Index(input, needle)
-		if idx < 0 {
-			return input, count
-		}
-		input = input[:idx] + repl + input[idx+len(needle):]
-		count++
+	count := strings.Count(input, needle)
+	if count == 0 {
+		return input, 0
 	}
+	return strings.ReplaceAll(input, needle, repl), count
 }
 
 func (p *Pipeline) add(input string, current int, fn func(string) (string, int)) (string, int) {

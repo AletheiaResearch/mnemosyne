@@ -69,6 +69,7 @@ func (a *Anonymizer) ApplyText(input string, count int) (string, int) {
 		out = replaced
 		count += matches
 	}
+	out, count = a.applyShortPathTokens(out, count)
 
 	for _, matcher := range a.textMatchers {
 		before := out
@@ -86,10 +87,12 @@ func (a *Anonymizer) ApplyPath(input string, count int) (string, int) {
 	}
 	clean := filepath.Clean(input)
 	if a.homeDir != "" && strings.HasPrefix(clean, a.homeDir) {
-		return a.homePrefix + strings.TrimPrefix(clean, a.homeDir), count + 1
+		out := a.homePrefix + strings.TrimPrefix(clean, a.homeDir)
+		return a.applyShortPathTokens(out, count+1)
 	}
 	if a.homeDir != "" && strings.HasPrefix(filepath.ToSlash(clean), filepath.ToSlash(a.homeDir)) {
-		return filepath.ToSlash(a.homePrefix) + strings.TrimPrefix(filepath.ToSlash(clean), filepath.ToSlash(a.homeDir)), count + 1
+		out := filepath.ToSlash(a.homePrefix) + strings.TrimPrefix(filepath.ToSlash(clean), filepath.ToSlash(a.homeDir))
+		return a.applyShortPathTokens(out, count+1)
 	}
 	return a.ApplyText(input, count)
 }
@@ -121,6 +124,30 @@ func (a *Anonymizer) addIdentifier(identifier string) {
 		re:          pattern,
 		replacement: "${1}" + token + "${3}",
 	})
+}
+
+func (a *Anonymizer) applyShortPathTokens(input string, count int) (string, int) {
+	if len(a.shortPathTokens) == 0 || input == "" {
+		return input, count
+	}
+
+	out := input
+	for identifier, token := range a.shortPathTokens {
+		for _, pattern := range shortIdentifierPathPatterns(identifier) {
+			replaced, matches := stringsReplaceAll(out, pattern, token)
+			out = replaced
+			count += matches
+		}
+	}
+	return out, count
+}
+
+func shortIdentifierPathPatterns(identifier string) []string {
+	return []string{
+		"/Users/" + identifier + "/",
+		"/home/" + identifier + "/",
+		`C:\Users\` + identifier + `\`,
+	}
 }
 
 func tokenFor(input string) string {
