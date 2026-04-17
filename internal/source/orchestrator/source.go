@@ -210,10 +210,12 @@ func (s *Source) extractSession(ctx context.Context, db *sql.DB, schemaInfo dbSc
 		}
 	}
 
+	sentAtColumn := firstNonEmpty(schemaInfo.messageSentAt, schemaInfo.messageCreatedAt)
+	createdAtColumn := firstNonEmpty(schemaInfo.messageCreatedAt, schemaInfo.messageSentAt)
 	query := `select %s, %s, %s, %s, %s, %s from %s where %s = ? order by coalesce(%s, %s), %s`
 	rows, err := db.Query(sprintf(query,
-		schemaInfo.messageRole, schemaInfo.messageContent, schemaInfo.messagePayload, schemaInfo.messageModel, schemaInfo.messageSentAt, schemaInfo.messageCreatedAt,
-		schemaInfo.sessionMessagesTable, schemaInfo.messageSessionID, schemaInfo.messageSentAt, schemaInfo.messageCreatedAt, schemaInfo.messageCreatedAt,
+		schemaInfo.messageRole, schemaInfo.messageContent, schemaInfo.messagePayload, schemaInfo.messageModel, sentAtColumn, createdAtColumn,
+		schemaInfo.sessionMessagesTable, schemaInfo.messageSessionID, sentAtColumn, createdAtColumn, createdAtColumn,
 	), sessionID)
 	if err != nil {
 		return schema.Record{}, err
@@ -252,8 +254,8 @@ func (s *Source) extractSession(ctx context.Context, db *sql.DB, schemaInfo dbSc
 			Timestamp: source.NormalizeTimestamp(firstNonEmpty(sentAt.String, createdAt.String)),
 			Text:      content,
 		}
-		if messageModel.Valid && messageModel.String != "" {
-			record.Model = firstNonEmpty(messageModel.String, record.Model)
+		if messageModel.Valid && messageModel.String != "" && record.Model == "" {
+			record.Model = messageModel.String
 		}
 		if payloadRaw.Valid && payloadRaw.String != "" {
 			decodeOrchestratorPayload(payloadRaw.String, &turn)
@@ -334,6 +336,12 @@ func detectSchema(db *sql.DB) (dbSchema, error) {
 	info.messageModel = findColumn(messageCols, "model", "model_id")
 	info.messageSentAt = findColumn(messageCols, "sent_at", "timestamp")
 	info.messageCreatedAt = findColumn(messageCols, "created_at", "created_at_ms", "time_created")
+	if info.messageSentAt == "" {
+		info.messageSentAt = info.messageCreatedAt
+	}
+	if info.messageCreatedAt == "" {
+		info.messageCreatedAt = info.messageSentAt
+	}
 
 	return info, nil
 }

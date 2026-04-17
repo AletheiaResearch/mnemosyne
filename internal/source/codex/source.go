@@ -69,14 +69,18 @@ func (s *Source) Discover(context.Context) ([]source.Grouping, error) {
 	return groupings, nil
 }
 
-func (s *Source) Extract(ctx context.Context, grouping source.Grouping, _ source.ExtractionContext, emit func(schema.Record) error) error {
+func (s *Source) Extract(ctx context.Context, grouping source.Grouping, extractCtx source.ExtractionContext, emit func(schema.Record) error) error {
 	files, err := s.sessionFiles()
 	if err != nil {
 		return err
 	}
 	for _, path := range files {
 		record, err := s.parseFile(path)
-		if err != nil || len(record.Turns) == 0 {
+		if err != nil {
+			source.ReportWarning(extractCtx, "codex skipped %s: %v", path, err)
+			continue
+		}
+		if len(record.Turns) == 0 {
 			continue
 		}
 		groupID := record.WorkingDir

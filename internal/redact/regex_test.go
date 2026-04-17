@@ -55,4 +55,7 @@ func TestAnonymizerRewritesShortHandleInsideHomeStylePath(t *testing.T) {
 	if strings.Contains(out, "/Users/xy/") {
 		t.Fatalf("expected short handle path segment to be anonymized, got %q", out)
 	}
+	if !strings.Contains(out, "/project") {
+		t.Fatalf("expected path separator to be preserved, got %q", out)
+	}
 }

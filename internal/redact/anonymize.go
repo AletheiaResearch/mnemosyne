@@ -202,9 +202,9 @@ func isPathIdentifierByte(c byte) bool {
 
 func shortIdentifierPathPatterns(identifier string) []string {
 	return []string{
-		"/Users/" + identifier + "/",
-		"/home/" + identifier + "/",
-		`C:\Users\` + identifier + `\`,
+		"/Users/" + identifier,
+		"/home/" + identifier,
+		`C:\Users\` + identifier,
 	}
 }
 

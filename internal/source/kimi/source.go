@@ -86,7 +86,7 @@ func (s *Source) Discover(context.Context) ([]source.Grouping, error) {
 	return groupings, nil
 }
 
-func (s *Source) Extract(ctx context.Context, grouping source.Grouping, _ source.ExtractionContext, emit func(schema.Record) error) error {
+func (s *Source) Extract(ctx context.Context, grouping source.Grouping, extractCtx source.ExtractionContext, emit func(schema.Record) error) error {
 	sessionRoot := filepath.Join(s.root, "sessions")
 	resolved := s.workspaceMap()
 
@@ -108,7 +108,8 @@ func (s *Source) Extract(ctx context.Context, grouping source.Grouping, _ source
 		recordID := filepath.Base(filepath.Dir(path))
 		record, err := s.parseSessionFile(path, grouping.DisplayLabel, recordID, workingDir)
 		if err != nil {
-			return err
+			source.ReportWarning(extractCtx, "kimi skipped %s: %v", path, err)
+			return nil
 		}
 		if len(record.Turns) == 0 {
 			return nil

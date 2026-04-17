@@ -65,7 +65,7 @@ func (s *Source) Discover(context.Context) ([]source.Grouping, error) {
 	return groupings, nil
 }
 
-func (s *Source) Extract(ctx context.Context, grouping source.Grouping, _ source.ExtractionContext, emit func(schema.Record) error) error {
+func (s *Source) Extract(ctx context.Context, grouping source.Grouping, extractCtx source.ExtractionContext, emit func(schema.Record) error) error {
 	projectDir := filepath.Join(s.root, grouping.ID)
 	if !source.DirExists(projectDir) {
 		return nil
@@ -79,7 +79,11 @@ func (s *Source) Extract(ctx context.Context, grouping source.Grouping, _ source
 	}
 	for _, path := range files {
 		record, err := s.parseSession(path)
-		if err != nil || len(record.Turns) == 0 {
+		if err != nil {
+			source.ReportWarning(extractCtx, "claudecode skipped %s: %v", path, err)
+			continue
+		}
+		if len(record.Turns) == 0 {
 			continue
 		}
 		record.Grouping = grouping.DisplayLabel
@@ -101,7 +105,11 @@ func (s *Source) Extract(ctx context.Context, grouping source.Grouping, _ source
 			continue
 		}
 		record, err := s.parseSubagents(projectDir, entry.Name(), subagentDir)
-		if err != nil || len(record.Turns) == 0 {
+		if err != nil {
+			source.ReportWarning(extractCtx, "claudecode skipped %s: %v", subagentDir, err)
+			continue
+		}
+		if len(record.Turns) == 0 {
 			continue
 		}
 		record.Grouping = grouping.DisplayLabel
@@ -156,13 +164,15 @@ func (s *Source) parseSubagents(projectDir, sessionID, subagentDir string) (sche
 	}
 	entries := make([]map[string]any, 0)
 	for _, path := range files {
-		_ = source.ReadJSONLines(path, func(_ int, raw []byte) error {
+		if err := source.ReadJSONLines(path, func(_ int, raw []byte) error {
 			line, err := source.DecodeJSONObject(raw)
 			if err == nil {
 				entries = append(entries, line)
 			}
 			return nil
-		})
+		}); err != nil {
+			return schema.Record{}, err
+		}
 	}
 	slices.SortFunc(entries, func(a, b map[string]any) int {
 		return strings.Compare(source.NormalizeTimestamp(a["timestamp"]), source.NormalizeTimestamp(b["timestamp"]))

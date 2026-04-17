@@ -81,7 +81,7 @@ func (s *Source) Discover(context.Context) ([]source.Grouping, error) {
 	return groupings, nil
 }
 
-func (s *Source) Extract(ctx context.Context, grouping source.Grouping, _ source.ExtractionContext, emit func(schema.Record) error) error {
+func (s *Source) Extract(ctx context.Context, grouping source.Grouping, extractCtx source.ExtractionContext, emit func(schema.Record) error) error {
 	files, err := source.CollectFiles(s.root, func(path string, _ os.DirEntry) bool {
 		return filepath.Ext(path) == ".jsonl" && filepath.Base(filepath.Dir(path)) == "sessions"
 	})
@@ -92,6 +92,7 @@ func (s *Source) Extract(ctx context.Context, grouping source.Grouping, _ source
 	for _, path := range files {
 		record, err := s.parseFile(path)
 		if err != nil {
+			source.ReportWarning(extractCtx, "openclaw skipped %s: %v", path, err)
 			continue
 		}
 		switch {

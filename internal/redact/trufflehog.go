@@ -14,7 +14,7 @@ func TrufflehogScan(input string) (string, error) {
 	if !TrufflehogAvailable() || input == "" {
 		return "", nil
 	}
-	cmd := exec.Command("trufflehog", "filesystem", "--json", "--only-verified=false", "--path", "-")
+	cmd := exec.Command("trufflehog", "stdin", "--json", "--only-verified=false")
 	cmd.Stdin = bytes.NewBufferString(input)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

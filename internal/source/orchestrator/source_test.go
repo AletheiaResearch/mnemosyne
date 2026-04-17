@@ -98,7 +98,63 @@ func TestExtractPrefersExternalSessionContent(t *testing.T) {
 	}
 }
 
+func TestExtractHandlesSchemasWithoutSentAtAndKeepsFirstMessageModel(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newTestDBWithStatements(t,
+		`create table repositories (id text primary key, name text, remote_origin text, path text)`,
+		`create table workspaces (id text primary key, repository_id text, label text, codename text, branch text)`,
+		`create table sessions (id text primary key, workspace_id text, agent_type text, external_session_id text, model text, title text)`,
+		`create table session_messages (session_id text, role text, content text, payload text, model text, created_at text)`,
+		`insert into repositories values ('repo-1', 'demo', 'git@github.com:example/demo.git', '/tmp/demo')`,
+		`insert into workspaces values ('ws-1', 'repo-1', 'feature-branch', '', 'main')`,
+		`insert into sessions values ('sess-1', 'ws-1', 'codex', 'external-1', '', 'Investigate bug')`,
+		`insert into session_messages values ('sess-1', 'assistant', 'first', '', 'gpt-5-a', '2026-04-17T10:00:00Z')`,
+		`insert into session_messages values ('sess-1', 'assistant', 'second', '', 'gpt-5-b', '2026-04-17T10:01:00Z')`,
+	)
+
+	src := newSource(dbPath, map[string]source.SessionLookup{
+		"codex": mockLookup{},
+	})
+	var records []schema.Record
+	err := src.Extract(t.Context(), source.Grouping{
+		ID:           "repo-1",
+		DisplayLabel: "orchestrator:demo",
+		Origin:       src.Name(),
+	}, source.ExtractionContext{}, func(record schema.Record) error {
+		records = append(records, record)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected one record, got %d", len(records))
+	}
+	if records[0].Model != "gpt-5-a" {
+		t.Fatalf("expected first message model to win, got %q", records[0].Model)
+	}
+	if records[0].Turns[0].Timestamp != "2026-04-17T10:00:00Z" {
+		t.Fatalf("expected created_at fallback timestamp, got %q", records[0].Turns[0].Timestamp)
+	}
+}
+
 func newTestDB(t *testing.T) string {
+	t.Helper()
+
+	return newTestDBWithStatements(t,
+		`create table repositories (id text primary key, name text, remote_origin text, path text)`,
+		`create table workspaces (id text primary key, repository_id text, label text, codename text, branch text)`,
+		`create table sessions (id text primary key, workspace_id text, agent_type text, external_session_id text, model text, title text)`,
+		`create table session_messages (session_id text, role text, content text, payload text, model text, sent_at text, created_at text)`,
+		`insert into repositories values ('repo-1', 'demo', 'git@github.com:example/demo.git', '/tmp/demo')`,
+		`insert into workspaces values ('ws-1', 'repo-1', 'feature-branch', '', 'main')`,
+		`insert into sessions values ('sess-1', 'ws-1', 'codex', 'external-1', '', 'Investigate bug')`,
+		`insert into session_messages values ('sess-1', 'assistant', 'hello', '', 'gpt-5', '2026-04-17T10:00:00Z', '2026-04-17T10:00:00Z')`,
+	)
+}
+
+func newTestDBWithStatements(t *testing.T, statements ...string) string {
 	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), "orchestrator.db")
@@ -108,16 +164,7 @@ func newTestDB(t *testing.T) string {
 	}
 	defer db.Close()
 
-	for _, statement := range []string{
-		`create table repositories (id text primary key, name text, remote_origin text, path text)`,
-		`create table workspaces (id text primary key, repository_id text, label text, codename text, branch text)`,
-		`create table sessions (id text primary key, workspace_id text, agent_type text, external_session_id text, model text, title text)`,
-		`create table session_messages (session_id text, role text, content text, payload text, model text, sent_at text, created_at text)`,
-		`insert into repositories values ('repo-1', 'demo', 'git@github.com:example/demo.git', '/tmp/demo')`,
-		`insert into workspaces values ('ws-1', 'repo-1', 'feature-branch', '', 'main')`,
-		`insert into sessions values ('sess-1', 'ws-1', 'codex', 'external-1', '', 'Investigate bug')`,
-		`insert into session_messages values ('sess-1', 'assistant', 'hello', '', 'gpt-5', '2026-04-17T10:00:00Z', '2026-04-17T10:00:00Z')`,
-	} {
+	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
 			t.Fatal(err)
 		}

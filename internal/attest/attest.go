@@ -35,7 +35,7 @@ func BuildRecords(path, fullName string, skipName bool, identity, entity, manual
 		ManualSampleCount:  report.ManualSampleCount,
 	}
 	lastAttest := &config.LastAttest{
-		Timestamp:         time.Now().UTC().Format(time.RFC3339),
+		Timestamp:         time.Now().UTC().Format(time.RFC3339Nano),
 		FilePath:          path,
 		BuiltInFindings:   !report.Findings.Empty(),
 		FullName:          fullName,

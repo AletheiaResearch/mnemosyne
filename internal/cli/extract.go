@@ -35,6 +35,7 @@ type extractSummary struct {
 	PerGrouping    map[string]breakdown `json:"per_grouping"`
 	InputTokens    int                  `json:"input_tokens"`
 	OutputTokens   int                  `json:"output_tokens"`
+	Warnings       []string             `json:"warnings,omitempty"`
 }
 
 type sourceSelection struct {
@@ -105,13 +106,26 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 				OutputPath:  output,
 				PerModel:    make(map[string]breakdown),
 				PerGrouping: make(map[string]breakdown),
+				Warnings:    make([]string, 0),
 			}
 			seenRecordIDs := make(map[string]struct{})
+			seenWarnings := make(map[string]struct{})
 
 			for _, selection := range selections {
 				extractCtx := source.ExtractionContext{
 					Logger:            rt.logger,
 					SuppressReasoning: suppressReasoning,
+					Warn: func(message string) {
+						message = strings.TrimSpace(message)
+						if message == "" {
+							return
+						}
+						if _, exists := seenWarnings[message]; exists {
+							return
+						}
+						seenWarnings[message] = struct{}{}
+						summary.Warnings = append(summary.Warnings, message)
+					},
 				}
 				err := selection.src.Extract(cmd.Context(), selection.grouping, extractCtx, func(record schema.Record) error {
 					if suppressReasoning {
@@ -164,6 +178,7 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 				OutputTokens:   summary.OutputTokens,
 				Scope:          scope,
 				OutputPath:     output,
+				Warnings:       summary.Warnings,
 			}
 			cfg.ReviewerStatements = nil
 			cfg.VerificationRecord = nil

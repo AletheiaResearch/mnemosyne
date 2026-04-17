@@ -42,7 +42,7 @@ func ScanFile(path string, fullName string, skipName bool) (Report, error) {
 	nameScan := NameScan{Skipped: skipName, FullName: fullName}
 
 	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), 64*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !skipName && fullName != "" && strings.Contains(strings.ToLower(line), strings.ToLower(fullName)) {
@@ -106,7 +106,7 @@ func DetectFileChange(path string, size int64, attestedAt string) bool {
 		return true
 	}
 	if attestedAt != "" {
-		if ts, err := time.Parse(time.RFC3339, attestedAt); err == nil && info.ModTime().After(ts) {
+		if ts, err := time.Parse(time.RFC3339Nano, attestedAt); err == nil && info.ModTime().After(ts) {
 			return true
 		}
 	}
