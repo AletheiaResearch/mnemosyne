@@ -59,6 +59,9 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 			}
 
 			scope = strings.TrimSpace(firstNonEmpty(scope, cfg.OriginScope))
+			if scope == "" && includeAll {
+				scope = "all"
+			}
 			if scope == "" {
 				return errors.New("extract requires --scope or a configured origin scope")
 			}
@@ -194,8 +197,8 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&output, "output", "", "path for the canonical JSONL export")
-	cmd.Flags().StringVar(&scope, "scope", "", "source scope to extract, or 'all'")
-	cmd.Flags().BoolVar(&includeAll, "include-all", false, "ignore grouping exclusions")
+	cmd.Flags().StringVar(&scope, "scope", "", "source scope to extract, or 'all' (defaults to 'all' when --include-all is set)")
+	cmd.Flags().BoolVar(&includeAll, "include-all", false, "ignore grouping exclusions and default scope to 'all'")
 	cmd.Flags().BoolVar(&suppressReasoning, "no-reasoning", false, "omit reasoning traces from assistant turns")
 	return cmd
 }
