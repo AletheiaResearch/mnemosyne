@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/AletheiaResearch/mnemosyne/internal/config"
+	"github.com/AletheiaResearch/mnemosyne/internal/tui/common"
 )
 
 type commandResultMsg struct {
@@ -44,6 +44,13 @@ type formScreen struct {
 	output     string
 	err        string
 	buildArgs  func(*formScreen) []string
+	width      int
+	height     int
+}
+
+func (s *formScreen) SetSize(width, height int) {
+	s.width = width
+	s.height = height
 }
 
 type commandScreen struct {
@@ -54,6 +61,13 @@ type commandScreen struct {
 	running    bool
 	output     string
 	err        string
+	width      int
+	height     int
+}
+
+func (s *commandScreen) SetSize(width, height int) {
+	s.width = width
+	s.height = height
 }
 
 func newScreen(key screenKey, configPath string) tea.Model {
@@ -263,21 +277,34 @@ func (s *commandScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (s *commandScreen) View() string {
 	parts := []string{
-		lipgloss.NewStyle().Bold(true).Render(s.title),
+		common.TitleStyle.Render(s.title),
 		"",
-		lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Render(s.intro),
+		common.SubtitleStyle.Render(s.intro),
 	}
 	if s.running {
-		parts = append(parts, "", "Running...")
+		parts = append(parts, "", common.AccentStyle.Render("Running…"))
 	}
 	if s.err != "" {
-		parts = append(parts, "", "Error: "+s.err)
+		parts = append(parts, "", common.ErrorStyle.Render("Error: ")+s.err)
 	}
 	if strings.TrimSpace(s.output) != "" {
 		parts = append(parts, "", s.output)
 	}
-	parts = append(parts, "", lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Press r to reload and esc to return to the menu."))
 	return strings.Join(parts, "\n")
+}
+
+func (s *commandScreen) FooterHints() string {
+	return common.HintLine("r reload", "esc back", "q quit")
+}
+
+func (s *commandScreen) FooterStatus() string {
+	if s.running {
+		return "running…"
+	}
+	if s.err != "" {
+		return "error"
+	}
+	return ""
 }
 
 func (s *formScreen) Init() tea.Cmd {
@@ -359,42 +386,63 @@ func (s *formScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (s *formScreen) View() string {
 	parts := []string{
-		lipgloss.NewStyle().Bold(true).Render(s.title),
+		common.TitleStyle.Render(s.title),
 		"",
-		lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Render(s.intro),
+		common.SubtitleStyle.Render(s.intro),
 		"",
 	}
 	for idx, field := range s.fields {
 		prefix := "  "
+		label := common.LabelStyle.Render(field.label)
 		if idx == s.focus {
-			prefix = "> "
+			prefix = common.FocusStyle.Render("▸ ")
+			label = common.FocusStyle.Render(field.label)
 		}
 		value := field.value
 		if strings.TrimSpace(value) == "" && field.placeholder != "" {
-			value = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(field.placeholder)
+			value = common.SubtleStyle.Render(field.placeholder)
+		} else {
+			value = common.ValueStyle.Render(value)
 		}
 		if field.kind == fieldBool {
-			value = boolString(isTrue(field.value))
+			if isTrue(field.value) {
+				value = common.SuccessStyle.Render("[✓] on")
+			} else {
+				value = common.MutedStyle.Render("[ ] off")
+			}
 		}
-		parts = append(parts, fmt.Sprintf("%s%s: %s", prefix, field.label, value))
+		parts = append(parts, fmt.Sprintf("%s%s %s", prefix, label, value))
 		if field.help != "" {
-			parts = append(parts, "  "+lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(field.help))
+			parts = append(parts, "  "+common.MutedStyle.Render(field.help))
 		}
 	}
 	if len(s.lastArgs) > 0 {
-		parts = append(parts, "", "Last command: "+commandPreview(s.lastArgs))
+		parts = append(parts, "", common.MutedStyle.Render("Last command: ")+commandPreview(s.lastArgs))
 	}
 	if s.running {
-		parts = append(parts, "", "Running...")
+		parts = append(parts, "", common.AccentStyle.Render("Running…"))
 	}
 	if s.err != "" {
-		parts = append(parts, "", "Error: "+s.err)
+		parts = append(parts, "", common.ErrorStyle.Render("Error: ")+s.err)
 	}
 	if strings.TrimSpace(s.output) != "" {
 		parts = append(parts, "", s.output)
 	}
-	parts = append(parts, "", lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Tab/arrows move, type to edit, space toggles booleans, ctrl+s runs, esc returns to the menu."))
 	return strings.Join(parts, "\n")
+}
+
+func (s *formScreen) FooterHints() string {
+	return common.HintLine("tab/↑↓ move", "type to edit", "space toggles", "ctrl+s run", "esc back")
+}
+
+func (s *formScreen) FooterStatus() string {
+	if s.running {
+		return "running…"
+	}
+	if s.err != "" {
+		return "error"
+	}
+	return ""
 }
 
 func runCommand(configPath string, args ...string) tea.Cmd {
