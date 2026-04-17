@@ -1,0 +1,44 @@
+version: 2
+
+project_name: mnemosyne
+
+before:
+  hooks:
+    - go test ./...
+
+builds:
+  - id: mnemosyne
+    main: ./cmd/mnemosyne
+    binary: mnemosyne
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/AletheiaResearch/mnemosyne/internal/version.Version={{.Version}} -X github.com/AletheiaResearch/mnemosyne/internal/version.Commit={{.Commit}} -X github.com/AletheiaResearch/mnemosyne/internal/version.Date={{.Date}}
+
+archives:
+  - formats:
+      - tar.gz
+    files:
+      - README.md
+      - schemas/**
+
+brews:
+  - repository:
+      owner: AletheiaResearch
+      name: homebrew-tap
+    directory: Formula
+    homepage: https://github.com/AletheiaResearch/mnemosyne
+    description: Export coding-assistant histories to unified, anonymized archives.
+    license: MIT
+    install: |
+      bin.install "mnemosyne"
+      bin.install_symlink "mnemosyne" => "mem"
+
+snapshot:
+  version_template: "{{ .Version }}-next"
