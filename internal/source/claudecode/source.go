@@ -114,7 +114,7 @@ func (s *Source) Extract(ctx context.Context, grouping source.Grouping, extractC
 			source.ReportWarning(extractCtx, "claudecode skipped %s: %v", path, err)
 			continue
 		}
-		if len(record.Turns) == 0 {
+		if record.Usage.AssistantTurns == 0 {
 			continue
 		}
 		record.Grouping = grouping.DisplayLabel
@@ -140,7 +140,7 @@ func (s *Source) Extract(ctx context.Context, grouping source.Grouping, extractC
 			source.ReportWarning(extractCtx, "claudecode skipped %s: %v", subagentDir, err)
 			continue
 		}
-		if len(record.Turns) == 0 {
+		if record.Usage.AssistantTurns == 0 {
 			continue
 		}
 		record.Grouping = grouping.DisplayLabel
