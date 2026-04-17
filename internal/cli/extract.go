@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/AletheiaResearch/mnemosyne/internal/config"
 	"github.com/AletheiaResearch/mnemosyne/internal/redact"
@@ -294,69 +295,66 @@ type emitted struct {
 }
 
 func runExtraction(parent context.Context, args runExtractionArgs) error {
-	ctx, cancel := context.WithCancel(parent)
-	defer cancel()
-
 	workers := extractionConcurrency(len(args.selections))
 	out := make(chan emitted, workers*4)
-	sem := make(chan struct{}, workers)
 
-	var wg sync.WaitGroup
-	var firstErr errOnce
 	progress := newExtractProgress(len(args.selections))
 	stopProgress := progress.run(args.rt.stderr)
 	defer stopProgress()
 
-	for _, selection := range args.selections {
-		selection := selection
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				return
-			}
-			defer func() { <-sem }()
-
-			extractCtx := source.ExtractionContext{
-				Logger:            args.rt.logger,
-				SuppressReasoning: args.suppressReasoning,
-				Warn:              args.addWarning,
-			}
-
-			err := selection.src.Extract(ctx, selection.grouping, extractCtx, func(record schema.Record) error {
-				if args.suppressReasoning {
-					for idx := range record.Turns {
-						record.Turns[idx].Reasoning = ""
-					}
-				}
-				redacted, count := args.pipeline.ApplyRecord(record)
-				if err := schema.ValidateRecord(redacted); err != nil {
-					args.rt.logger.Debug("skip invalid record", "record_id", record.RecordID, "error", err)
-					return sendEmitted(ctx, out, emitted{invalid: true})
-				}
-				data, err := json.Marshal(redacted)
-				if err != nil {
-					return err
-				}
-				return sendEmitted(ctx, out, emitted{record: redacted, data: data, redactions: count})
-			})
-			if err != nil && !errors.Is(err, context.Canceled) {
-				firstErr.Store(err)
-				cancel()
-				return
-			}
-			progress.completeSelection()
-		}()
-	}
+	cancelCtx, cancel := context.WithCancel(parent)
+	defer cancel()
+	g, ctx := errgroup.WithContext(cancelCtx)
+	g.SetLimit(workers)
 
 	go func() {
-		wg.Wait()
+		for _, selection := range args.selections {
+			selection := selection
+			g.Go(func() error {
+				extractCtx := source.ExtractionContext{
+					Logger:            args.rt.logger,
+					SuppressReasoning: args.suppressReasoning,
+					Warn:              args.addWarning,
+				}
+				err := selection.src.Extract(ctx, selection.grouping, extractCtx, func(record schema.Record) error {
+					if args.suppressReasoning {
+						for idx := range record.Turns {
+							record.Turns[idx].Reasoning = ""
+						}
+					}
+					redacted, count := args.pipeline.ApplyRecord(record)
+
+					rec := emitted{record: redacted, redactions: count}
+					if err := schema.ValidateRecord(redacted); err != nil {
+						args.rt.logger.Debug("skip invalid record", "record_id", record.RecordID, "error", err)
+						rec = emitted{invalid: true}
+					} else {
+						data, err := json.Marshal(redacted)
+						if err != nil {
+							return err
+						}
+						rec.data = data
+					}
+
+					select {
+					case out <- rec:
+						return nil
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				})
+				if err != nil && !errors.Is(err, context.Canceled) {
+					return err
+				}
+				progress.completeSelection()
+				return nil
+			})
+		}
+		_ = g.Wait()
 		close(out)
 	}()
 
+	var writeErr error
 	for rec := range out {
 		if rec.invalid {
 			args.summary.SkippedRecords++
@@ -369,7 +367,9 @@ func runExtraction(parent context.Context, args runExtractionArgs) error {
 		}
 		args.seenRecordIDs[rec.record.RecordID] = struct{}{}
 		if _, err := args.writer.Write(append(rec.data, '\n')); err != nil {
-			firstErr.Store(err)
+			if writeErr == nil {
+				writeErr = err
+			}
 			cancel()
 			continue
 		}
@@ -382,53 +382,16 @@ func runExtraction(parent context.Context, args runExtractionArgs) error {
 		progress.addRecord(rec.redactions)
 	}
 
-	if err := firstErr.Load(); err != nil {
+	if err := g.Wait(); err != nil {
 		return err
 	}
-	return nil
-}
-
-func sendEmitted(ctx context.Context, out chan<- emitted, rec emitted) error {
-	select {
-	case out <- rec:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-type errOnce struct {
-	mu  sync.Mutex
-	err error
-}
-
-func (e *errOnce) Store(err error) {
-	if err == nil {
-		return
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.err == nil {
-		e.err = err
-	}
-}
-
-func (e *errOnce) Load() error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.err
+	return writeErr
 }
 
 func extractionConcurrency(selections int) int {
-	n := goruntime.NumCPU()
-	if n < 2 {
-		n = 2
-	}
-	if n > 8 {
-		n = 8
-	}
-	if selections > 0 && n > selections {
-		n = selections
+	n := min(max(goruntime.NumCPU(), 2), 8)
+	if selections > 0 {
+		n = min(n, selections)
 	}
 	return n
 }
