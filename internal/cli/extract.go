@@ -295,8 +295,7 @@ type emitted struct {
 }
 
 func runExtraction(parent context.Context, args runExtractionArgs) error {
-	workers := extractionConcurrency(len(args.selections))
-	out := make(chan emitted, workers*4)
+	maxWorkers := extractionConcurrency(len(args.selections))
 
 	progress := newExtractProgress(len(args.selections))
 	stopProgress := progress.run(args.rt.stderr)
@@ -304,11 +303,43 @@ func runExtraction(parent context.Context, args runExtractionArgs) error {
 
 	cancelCtx, cancel := context.WithCancel(parent)
 	defer cancel()
-	g, ctx := errgroup.WithContext(cancelCtx)
+
+	// Process selections in priority buckets so higher-priority sources
+	// (e.g. the orchestrator, which enriches external sessions) fully
+	// populate seenRecordIDs before lower-priority sources can emit a
+	// duplicate RecordID and win dedup. See sourcePriority.
+	var writeErr error
+	for _, bucket := range bucketByPriority(args.selections) {
+		if cancelCtx.Err() != nil {
+			break
+		}
+		if err := extractBucket(cancelCtx, cancel, bucket, maxWorkers, args, progress, &writeErr); err != nil {
+			return err
+		}
+		if writeErr != nil {
+			break
+		}
+	}
+	return writeErr
+}
+
+func extractBucket(
+	parent context.Context,
+	cancel context.CancelFunc,
+	selections []sourceSelection,
+	maxWorkers int,
+	args runExtractionArgs,
+	progress *extractProgress,
+	writeErr *error,
+) error {
+	workers := min(maxWorkers, len(selections))
+	out := make(chan emitted, workers*4)
+
+	g, ctx := errgroup.WithContext(parent)
 	g.SetLimit(workers)
 
 	go func() {
-		for _, selection := range args.selections {
+		for _, selection := range selections {
 			selection := selection
 			g.Go(func() error {
 				extractCtx := source.ExtractionContext{
@@ -354,7 +385,6 @@ func runExtraction(parent context.Context, args runExtractionArgs) error {
 		close(out)
 	}()
 
-	var writeErr error
 	for rec := range out {
 		if rec.invalid {
 			args.summary.SkippedRecords++
@@ -367,8 +397,8 @@ func runExtraction(parent context.Context, args runExtractionArgs) error {
 		}
 		args.seenRecordIDs[rec.record.RecordID] = struct{}{}
 		if _, err := args.writer.Write(append(rec.data, '\n')); err != nil {
-			if writeErr == nil {
-				writeErr = err
+			if *writeErr == nil {
+				*writeErr = err
 			}
 			cancel()
 			continue
@@ -382,10 +412,26 @@ func runExtraction(parent context.Context, args runExtractionArgs) error {
 		progress.addRecord(rec.redactions)
 	}
 
-	if err := g.Wait(); err != nil {
-		return err
+	return g.Wait()
+}
+
+func bucketByPriority(selections []sourceSelection) [][]sourceSelection {
+	if len(selections) == 0 {
+		return nil
 	}
-	return writeErr
+	var buckets [][]sourceSelection
+	start := 0
+	currentPriority := sourcePriority(selections[0].src.Name())
+	for i := 1; i < len(selections); i++ {
+		p := sourcePriority(selections[i].src.Name())
+		if p != currentPriority {
+			buckets = append(buckets, selections[start:i])
+			start = i
+			currentPriority = p
+		}
+	}
+	buckets = append(buckets, selections[start:])
+	return buckets
 }
 
 func extractionConcurrency(selections int) int {
