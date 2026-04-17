@@ -297,9 +297,9 @@ func (s *formScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		current := &s.fields[s.focus]
 		switch msg.String() {
-		case "tab", "down", "j":
+		case "tab", "down":
 			s.focus = (s.focus + 1) % len(s.fields)
-		case "shift+tab", "up", "k":
+		case "shift+tab", "up":
 			s.focus--
 			if s.focus < 0 {
 				s.focus = len(s.fields) - 1
@@ -323,6 +323,25 @@ func (s *formScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return s, nil
 			}
 			current.value += " "
+		case "j":
+			if current.kind == fieldBool {
+				s.focus = (s.focus + 1) % len(s.fields)
+				return s, nil
+			}
+			if msg.Type == tea.KeyRunes {
+				current.value += string(msg.Runes)
+			}
+		case "k":
+			if current.kind == fieldBool {
+				s.focus--
+				if s.focus < 0 {
+					s.focus = len(s.fields) - 1
+				}
+				return s, nil
+			}
+			if msg.Type == tea.KeyRunes {
+				current.value += string(msg.Runes)
+			}
 		default:
 			if current.kind == fieldBool {
 				if msg.String() == "enter" {
@@ -374,7 +393,7 @@ func (s *formScreen) View() string {
 	if strings.TrimSpace(s.output) != "" {
 		parts = append(parts, "", s.output)
 	}
-	parts = append(parts, "", lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Tab/j/k move, type to edit, space toggles booleans, ctrl+s runs, esc returns to the menu."))
+	parts = append(parts, "", lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Tab/arrows move, type to edit, space toggles booleans, ctrl+s runs, esc returns to the menu."))
 	return strings.Join(parts, "\n")
 }
 
