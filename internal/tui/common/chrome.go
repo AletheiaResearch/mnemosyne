@@ -98,3 +98,27 @@ func HintLine(parts ...string) string {
 	}
 	return strings.Join(cleaned, " · ")
 }
+
+// Panel renders a titled rounded panel containing the given body. The title
+// sits above the border. Width is the outer width of the panel.
+func Panel(title, body string, width int) string {
+	if width < 6 {
+		width = 6
+	}
+	inner := width - 2 // border columns
+	box := PanelStyle.Copy().Width(inner).Render(body)
+	if title == "" {
+		return box
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		PanelTitleStyle.Render(title),
+		box,
+	)
+}
+
+// KV renders a key/value row with the key padded to keyWidth and the value
+// rendered as-is (already styled by caller if needed).
+func KV(key, value string, keyWidth int) string {
+	k := LabelStyle.Copy().Width(keyWidth).Render(key)
+	return lipgloss.JoinHorizontal(lipgloss.Top, k, " ", value)
+}

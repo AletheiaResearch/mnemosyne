@@ -74,12 +74,7 @@ func newScreen(key screenKey, configPath string) tea.Model {
 	cfg, _ := config.Load(configPath)
 	switch key {
 	case screenSurvey:
-		return &commandScreen{
-			title:      "Survey",
-			intro:      "Survey reloads workflow state and shows the actual CLI output. Press r to refresh.",
-			configPath: configPath,
-			args:       []string{"survey"},
-		}
+		return newSurveyScreen(configPath)
 	case screenConfigure:
 		return &formScreen{
 			title:      "Configure",
