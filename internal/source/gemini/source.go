@@ -100,6 +100,29 @@ func (s *Source) Extract(ctx context.Context, grouping source.Grouping, _ source
 	return err
 }
 
+func (s *Source) LookupSession(_ context.Context, sessionID string) (schema.Record, bool, error) {
+	var found schema.Record
+	err := filepath.WalkDir(s.root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry == nil || entry.IsDir() || filepath.Ext(path) != ".json" || !strings.HasPrefix(filepath.Base(path), "session-") {
+			return nil
+		}
+		record, parseErr := s.parseFile(path, "")
+		if parseErr != nil || record.RecordID != sessionID {
+			return nil
+		}
+		found = record
+		return os.ErrClosed
+	})
+	switch {
+	case err == nil:
+		return schema.Record{}, false, nil
+	case err == os.ErrClosed:
+		return found, true, nil
+	default:
+		return schema.Record{}, false, err
+	}
+}
+
 func (s *Source) parseFile(path string, grouping string) (schema.Record, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {

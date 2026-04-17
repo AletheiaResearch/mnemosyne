@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -105,6 +106,7 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 				PerModel:    make(map[string]breakdown),
 				PerGrouping: make(map[string]breakdown),
 			}
+			seenRecordIDs := make(map[string]struct{})
 
 			for _, selection := range selections {
 				extractCtx := source.ExtractionContext{
@@ -123,6 +125,12 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 						rt.logger.Debug("skip invalid record", "record_id", record.RecordID, "error", err)
 						return nil
 					}
+					if _, exists := seenRecordIDs[redacted.RecordID]; exists {
+						summary.SkippedRecords++
+						rt.logger.Debug("skip duplicate record", "record_id", redacted.RecordID, "origin", redacted.Origin)
+						return nil
+					}
+					seenRecordIDs[redacted.RecordID] = struct{}{}
 					data, err := json.Marshal(redacted)
 					if err != nil {
 						return err
@@ -188,6 +196,12 @@ func defaultOutputPath() (string, error) {
 func selectedSources(scope string) ([]source.Source, error) {
 	all := sources.Registry()
 	if scope == "all" {
+		sort.SliceStable(all, func(i, j int) bool {
+			if sourcePriority(all[i].Name()) != sourcePriority(all[j].Name()) {
+				return sourcePriority(all[i].Name()) < sourcePriority(all[j].Name())
+			}
+			return all[i].Name() < all[j].Name()
+		})
 		return all, nil
 	}
 	selected := make([]source.Source, 0, 1)
@@ -241,4 +255,11 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func sourcePriority(name string) int {
+	if name == "orchestrator" {
+		return 0
+	}
+	return 1
 }

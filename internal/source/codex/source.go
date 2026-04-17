@@ -94,6 +94,26 @@ func (s *Source) Extract(ctx context.Context, grouping source.Grouping, _ source
 	return nil
 }
 
+func (s *Source) LookupSession(_ context.Context, sessionID string) (schema.Record, bool, error) {
+	files, err := s.sessionFiles()
+	if err != nil {
+		return schema.Record{}, false, err
+	}
+	for _, path := range files {
+		if filepath.Base(path) != sessionID+".jsonl" {
+			continue
+		}
+		record, err := s.parseFile(path)
+		if err != nil {
+			continue
+		}
+		if record.RecordID == sessionID {
+			return record, true, nil
+		}
+	}
+	return schema.Record{}, false, nil
+}
+
 func (s *Source) sessionFiles() ([]string, error) {
 	all := make([]string, 0)
 	for _, root := range []string{s.activeRoot, s.archiveRoot} {

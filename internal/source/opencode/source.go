@@ -125,6 +125,29 @@ func (s *Source) Extract(ctx context.Context, grouping source.Grouping, _ source
 	return nil
 }
 
+func (s *Source) LookupSession(_ context.Context, sessionID string) (schema.Record, bool, error) {
+	db, err := source.OpenSQLite(s.dbPath)
+	if err != nil {
+		return schema.Record{}, false, nil
+	}
+	defer db.Close()
+
+	var directory string
+	var createdAt any
+	var updatedAt any
+	if err := db.QueryRow(`select coalesce(directory, ''), time_created, time_updated from session where id = ?`, sessionID).Scan(&directory, &createdAt, &updatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return schema.Record{}, false, nil
+		}
+		return schema.Record{}, false, err
+	}
+	record, err := s.extractSession(db, sessionID, "", directory, createdAt, updatedAt)
+	if err != nil {
+		return schema.Record{}, false, err
+	}
+	return record, len(record.Turns) > 0, nil
+}
+
 func (s *Source) extractSession(db *sql.DB, sessionID, grouping, directory string, createdAt, updatedAt any) (schema.Record, error) {
 	record := schema.Record{
 		RecordID:   sessionID,

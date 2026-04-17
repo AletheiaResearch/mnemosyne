@@ -110,6 +110,25 @@ func (s *Source) Extract(ctx context.Context, grouping source.Grouping, _ source
 	return nil
 }
 
+func (s *Source) LookupSession(_ context.Context, sessionID string) (schema.Record, bool, error) {
+	files, err := source.CollectFiles(s.root, func(path string, _ os.DirEntry) bool {
+		return filepath.Ext(path) == ".jsonl" && filepath.Base(filepath.Dir(path)) == "sessions"
+	})
+	if err != nil {
+		return schema.Record{}, false, err
+	}
+	for _, path := range files {
+		record, err := s.parseFile(path)
+		if err != nil {
+			continue
+		}
+		if record.RecordID == sessionID {
+			return record, true, nil
+		}
+	}
+	return schema.Record{}, false, nil
+}
+
 func (s *Source) parseFile(path string) (schema.Record, error) {
 	lines := make([]map[string]any, 0)
 	err := source.ReadJSONLines(path, func(_ int, raw []byte) error {

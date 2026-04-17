@@ -9,13 +9,22 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/AletheiaResearch/mnemosyne/internal/schema"
 	"github.com/AletheiaResearch/mnemosyne/internal/source"
+	"github.com/AletheiaResearch/mnemosyne/internal/source/claudecode"
+	"github.com/AletheiaResearch/mnemosyne/internal/source/codex"
+	"github.com/AletheiaResearch/mnemosyne/internal/source/cursor"
+	"github.com/AletheiaResearch/mnemosyne/internal/source/gemini"
+	"github.com/AletheiaResearch/mnemosyne/internal/source/kimi"
+	"github.com/AletheiaResearch/mnemosyne/internal/source/openclaw"
+	"github.com/AletheiaResearch/mnemosyne/internal/source/opencode"
 )
 
 type Source struct {
-	dbPath string
+	dbPath  string
+	lookups map[string]source.SessionLookup
 }
 
 type dbSchema struct {
@@ -52,14 +61,33 @@ type dbSchema struct {
 }
 
 func New(dbPath string) *Source {
+	return newSource(dbPath, nil)
+}
+
+func newSource(dbPath string, lookups map[string]source.SessionLookup) *Source {
 	if dbPath == "" {
 		dbPath = detectDefaultDB()
 	}
-	return &Source{dbPath: dbPath}
+	if lookups == nil {
+		lookups = defaultLookups()
+	}
+	return &Source{dbPath: dbPath, lookups: lookups}
 }
 
 func (s *Source) Name() string {
 	return "orchestrator"
+}
+
+func defaultLookups() map[string]source.SessionLookup {
+	return map[string]source.SessionLookup{
+		"claudecode": claudecode.New(""),
+		"codex":      codex.New("", ""),
+		"cursor":     cursor.New(""),
+		"gemini":     gemini.New(""),
+		"kimi":       kimi.New(""),
+		"openclaw":   openclaw.New(""),
+		"opencode":   opencode.New(""),
+	}
 }
 
 func (s *Source) Discover(context.Context) ([]source.Grouping, error) {
@@ -159,7 +187,7 @@ where r.%s = ?`
 			continue
 		}
 		label := firstNonEmpty(workspaceLabel, codename)
-		record, err := s.extractSession(db, schemaInfo, sessionID, repoLabel, repoPath, label, branch, model, title, agentType, externalID)
+		record, err := s.extractSession(ctx, db, schemaInfo, sessionID, repoLabel, repoPath, label, branch, model, title, agentType, externalID)
 		if err != nil || len(record.Turns) == 0 {
 			continue
 		}
@@ -171,7 +199,17 @@ where r.%s = ?`
 	return nil
 }
 
-func (s *Source) extractSession(db *sql.DB, schemaInfo dbSchema, sessionID, repoLabel, repoPath, workspaceLabel, branch, model, title, agentType, externalID string) (schema.Record, error) {
+func (s *Source) extractSession(ctx context.Context, db *sql.DB, schemaInfo dbSchema, sessionID, repoLabel, repoPath, workspaceLabel, branch, model, title, agentType, externalID string) (schema.Record, error) {
+	workingDir := derivedWorkingDir(repoPath, workspaceLabel)
+	lookup := s.lookups[normalizeAgentType(agentType)]
+	externalStoreAvailable := lookup != nil && strings.TrimSpace(externalID) != ""
+	if externalStoreAvailable {
+		externalRecord, found, err := lookup.LookupSession(ctx, externalID)
+		if err == nil && found && len(externalRecord.Turns) > 0 {
+			return preferExternalRecord(sessionID, repoLabel, workingDir, branch, model, title, agentType, externalID, externalRecord), nil
+		}
+	}
+
 	query := `select %s, %s, %s, %s, %s, %s from %s where %s = ? order by coalesce(%s, %s), %s`
 	rows, err := db.Query(sprintf(query,
 		schemaInfo.messageRole, schemaInfo.messageContent, schemaInfo.messagePayload, schemaInfo.messageModel, schemaInfo.messageSentAt, schemaInfo.messageCreatedAt,
@@ -192,16 +230,15 @@ func (s *Source) extractSession(db *sql.DB, schemaInfo dbSchema, sessionID, repo
 		Extensions: map[string]any{
 			"orchestrator": map[string]any{
 				"agent_type":               agentType,
+				"orchestrator_session_id":  sessionID,
 				"external_session_id":      externalID,
 				"content_source":           "orchestrator",
-				"external_store_available": false,
+				"external_store_available": externalStoreAvailable,
 				"external_store_preferred": false,
 			},
 		},
 	}
-	if repoPath != "" && workspaceLabel != "" {
-		record.WorkingDir = filepath.Join(repoPath, workspaceLabel)
-	}
+	record.WorkingDir = workingDir
 
 	for rows.Next() {
 		var role, content string
@@ -452,4 +489,71 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func derivedWorkingDir(repoPath, workspaceLabel string) string {
+	if repoPath == "" || workspaceLabel == "" {
+		return ""
+	}
+	return filepath.Join(repoPath, workspaceLabel)
+}
+
+func preferExternalRecord(sessionID, repoLabel, workingDir, branch, model, title, agentType, externalID string, external schema.Record) schema.Record {
+	externalOrigin := external.Origin
+	externalGrouping := external.Grouping
+	externalRecordID := external.RecordID
+
+	record := external
+	record.RecordID = firstNonEmpty(externalID, external.RecordID, sessionID)
+	record.Origin = "orchestrator"
+	record.Grouping = "orchestrator:" + repoDisplayName(repoLabel)
+	record.WorkingDir = firstNonEmpty(workingDir, record.WorkingDir)
+	record.Branch = firstNonEmpty(branch, record.Branch)
+	record.Title = firstNonEmpty(title, record.Title)
+	record.Model = firstNonEmpty(model, record.Model, "orchestrator/unknown")
+	if record.Extensions == nil {
+		record.Extensions = make(map[string]any)
+	}
+
+	orchestratorMeta := map[string]any{
+		"agent_type":               agentType,
+		"orchestrator_session_id":  sessionID,
+		"external_session_id":      externalID,
+		"content_source":           externalOrigin,
+		"external_store_available": true,
+		"external_store_preferred": true,
+	}
+	if externalOrigin != "" {
+		orchestratorMeta["external_origin"] = externalOrigin
+	}
+	if externalGrouping != "" {
+		orchestratorMeta["external_grouping"] = externalGrouping
+	}
+	if externalRecordID != "" {
+		orchestratorMeta["external_record_id"] = externalRecordID
+	}
+	record.Extensions["orchestrator"] = orchestratorMeta
+	return record
+}
+
+func normalizeAgentType(agentType string) string {
+	key := strings.Map(func(r rune) rune {
+		switch {
+		case unicode.IsLetter(r), unicode.IsDigit(r):
+			return unicode.ToLower(r)
+		default:
+			return -1
+		}
+	}, agentType)
+
+	switch key {
+	case "claude", "claudecode", "claudecodecli", "anthropic":
+		return "claudecode"
+	case "gemini", "geminicli":
+		return "gemini"
+	case "kimi", "kimicli":
+		return "kimi"
+	default:
+		return key
+	}
 }

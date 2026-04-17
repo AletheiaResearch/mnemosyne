@@ -129,6 +129,28 @@ func (s *Source) Extract(ctx context.Context, grouping source.Grouping, _ source
 	return nil
 }
 
+func (s *Source) LookupSession(_ context.Context, sessionID string) (schema.Record, bool, error) {
+	db, err := source.OpenSQLite(s.dbPath)
+	if err != nil {
+		return schema.Record{}, false, nil
+	}
+	defer db.Close()
+
+	var value []byte
+	if err := db.QueryRow(`select value from cursorDiskKV where key = ?`, "composerData:"+sessionID).Scan(&value); err != nil {
+		if err == sql.ErrNoRows {
+			return schema.Record{}, false, nil
+		}
+		return schema.Record{}, false, err
+	}
+	workspace := s.workspaceForComposer(db, sessionID, value)
+	record, err := s.extractComposer(db, sessionID, value, "", workspace)
+	if err != nil {
+		return schema.Record{}, false, err
+	}
+	return record, len(record.Turns) > 0, nil
+}
+
 func (s *Source) workspaceForComposer(db *sql.DB, composerID string, value []byte) string {
 	headers := composerHeaders(value)
 	limit := min(5, len(headers))

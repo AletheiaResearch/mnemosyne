@@ -20,3 +20,7 @@ type Source interface {
 	Discover(context.Context) ([]Grouping, error)
 	Extract(context.Context, Grouping, ExtractionContext, func(schema.Record) error) error
 }
+
+type SessionLookup interface {
+	LookupSession(context.Context, string) (schema.Record, bool, error)
+}

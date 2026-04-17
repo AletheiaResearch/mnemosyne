@@ -106,80 +106,119 @@ func (s *Source) Extract(ctx context.Context, grouping source.Grouping, _ source
 		}
 
 		recordID := filepath.Base(filepath.Dir(path))
-		record := schema.Record{
-			RecordID:   recordID,
-			Origin:     s.Name(),
-			Grouping:   grouping.DisplayLabel,
-			Model:      "kimi-k2",
-			WorkingDir: workingDir,
-			Turns:      make([]schema.Turn, 0),
-		}
-		outputTokens := 0
-
-		err = source.ReadJSONLines(path, func(_ int, raw []byte) error {
-			var line map[string]any
-			if err := json.Unmarshal(raw, &line); err != nil {
-				return nil
-			}
-			switch source.ExtractString(line, "role") {
-			case "user":
-				record.Turns = append(record.Turns, schema.Turn{
-					Role: "user",
-					Text: source.ExtractString(line, "content"),
-				})
-			case "assistant":
-				turn := schema.Turn{Role: "assistant"}
-				for _, item := range source.ExtractSlice(line, "content") {
-					block, ok := item.(map[string]any)
-					if !ok {
-						continue
-					}
-					switch source.ExtractString(block, "type") {
-					case "text":
-						turn.Text += source.ExtractString(block, "text")
-					case "think":
-						if turn.Reasoning != "" {
-							turn.Reasoning += "\n"
-						}
-						turn.Reasoning += source.ExtractString(block, "text")
-					}
-				}
-				for _, item := range source.ExtractSlice(line, "tool_calls") {
-					callMap, ok := item.(map[string]any)
-					if !ok {
-						continue
-					}
-					fn := source.ExtractMap(callMap, "function")
-					args := source.JSONString(source.ExtractString(fn, "arguments"))
-					turn.ToolCalls = append(turn.ToolCalls, schema.ToolCall{
-						Tool:  source.ExtractString(fn, "name"),
-						Input: args,
-					})
-				}
-				record.Turns = append(record.Turns, turn)
-			case "_usage":
-				if count, ok := line["token_count"].(float64); ok && int(count) > outputTokens {
-					outputTokens = int(count)
-				}
-			}
-			return nil
-		})
+		record, err := s.parseSessionFile(path, grouping.DisplayLabel, recordID, workingDir)
 		if err != nil {
 			return err
-		}
-
-		record.Usage = schema.Usage{
-			UserTurns:      source.CountTurns(record.Turns, "user"),
-			AssistantTurns: source.CountTurns(record.Turns, "assistant"),
-			ToolCalls:      source.CountToolCalls(record.Turns),
-			InputTokens:    0,
-			OutputTokens:   outputTokens,
 		}
 		if len(record.Turns) == 0 {
 			return nil
 		}
 		return emit(record)
 	})
+}
+
+func (s *Source) LookupSession(_ context.Context, sessionID string) (schema.Record, bool, error) {
+	sessionRoot := filepath.Join(s.root, "sessions")
+	resolved := s.workspaceMap()
+
+	var found schema.Record
+	err := filepath.WalkDir(sessionRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry == nil || entry.IsDir() || filepath.Base(path) != "context.jsonl" {
+			return nil
+		}
+		if filepath.Base(filepath.Dir(path)) != sessionID {
+			return nil
+		}
+		projectDigest := filepath.Base(filepath.Dir(filepath.Dir(path)))
+		workingDir := resolved[projectDigest]
+		record, parseErr := s.parseSessionFile(path, "", sessionID, workingDir)
+		if parseErr != nil || len(record.Turns) == 0 {
+			return nil
+		}
+		found = record
+		return os.ErrClosed
+	})
+	switch {
+	case err == nil:
+		return schema.Record{}, false, nil
+	case err == os.ErrClosed:
+		return found, true, nil
+	default:
+		return schema.Record{}, false, err
+	}
+}
+
+func (s *Source) parseSessionFile(path, grouping, recordID, workingDir string) (schema.Record, error) {
+	record := schema.Record{
+		RecordID:   recordID,
+		Origin:     s.Name(),
+		Grouping:   grouping,
+		Model:      "kimi-k2",
+		WorkingDir: workingDir,
+		Turns:      make([]schema.Turn, 0),
+	}
+	outputTokens := 0
+
+	err := source.ReadJSONLines(path, func(_ int, raw []byte) error {
+		var line map[string]any
+		if err := json.Unmarshal(raw, &line); err != nil {
+			return nil
+		}
+		switch source.ExtractString(line, "role") {
+		case "user":
+			record.Turns = append(record.Turns, schema.Turn{
+				Role: "user",
+				Text: source.ExtractString(line, "content"),
+			})
+		case "assistant":
+			turn := schema.Turn{Role: "assistant"}
+			for _, item := range source.ExtractSlice(line, "content") {
+				block, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				switch source.ExtractString(block, "type") {
+				case "text":
+					turn.Text += source.ExtractString(block, "text")
+				case "think":
+					if turn.Reasoning != "" {
+						turn.Reasoning += "\n"
+					}
+					turn.Reasoning += source.ExtractString(block, "text")
+				}
+			}
+			for _, item := range source.ExtractSlice(line, "tool_calls") {
+				callMap, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				fn := source.ExtractMap(callMap, "function")
+				args := source.JSONString(source.ExtractString(fn, "arguments"))
+				turn.ToolCalls = append(turn.ToolCalls, schema.ToolCall{
+					Tool:  source.ExtractString(fn, "name"),
+					Input: args,
+				})
+			}
+			record.Turns = append(record.Turns, turn)
+		case "_usage":
+			if count, ok := line["token_count"].(float64); ok && int(count) > outputTokens {
+				outputTokens = int(count)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return schema.Record{}, err
+	}
+
+	record.Usage = schema.Usage{
+		UserTurns:      source.CountTurns(record.Turns, "user"),
+		AssistantTurns: source.CountTurns(record.Turns, "assistant"),
+		ToolCalls:      source.CountToolCalls(record.Turns),
+		InputTokens:    0,
+		OutputTokens:   outputTokens,
+	}
+	return record, nil
 }
 
 func (s *Source) workspaceMap() map[string]string {
