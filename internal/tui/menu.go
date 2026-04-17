@@ -27,6 +27,13 @@ func newMenuModel() menuModel {
 	}
 }
 
+func (m menuModel) Selected() string {
+	if m.index < 0 || m.index >= len(m.items) {
+		return ""
+	}
+	return m.items[m.index]
+}
+
 func (m menuModel) Init() tea.Cmd {
 	return nil
 }

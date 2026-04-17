@@ -9,7 +9,7 @@ Configuration is stored as JSON in the per-user config directory.
 - `custom_handles`: short identity-bearing handles to anonymize.
 - `scope_confirmed`: whether the user approved the grouping list.
 - `phase_marker`: one of `initial`, `preparing`, `pending-review`, `cleared`, `finalized`.
-- `last_extract`: timestamp, record count, scope, and last output path.
+- `last_extract`: timestamp, record count, skipped-record count, redaction count, token totals, scope, and last output path.
 - `reviewer_statements`: saved attestation text for identity scan, entity interview, and manual review.
 - `verification_record`: parsed full-name-scan and manual-sample data.
 - `last_attest`: summary of the last attested file.
