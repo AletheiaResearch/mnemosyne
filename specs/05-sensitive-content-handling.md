@@ -38,6 +38,17 @@ but base64-encoded binary payloads are left intact.
 
 ### Categories detected
 
+The list below enumerates categories a tool of this class must detect
+to be minimally useful. Implementers may add categories — for example,
+detectors for emerging platforms' credential formats, region-specific
+identifier types, or any newly-leaked secret format that becomes
+common — and should keep their detector set updatable independently of
+the core utility. New credential shapes appear continuously; the
+utility benefits from a design in which custom detectors can be
+introduced without a full release of the utility itself (for example
+through a data-driven detector registry, a plugin point, or a config
+file enumerating additional patterns).
+
 The implementation must detect — at minimum — strings matching the
 following credential and identifier categories. For each category,
 the implementation maintains a pattern or detector; patterns are an
@@ -87,6 +98,14 @@ a minimum include:
 The allowlist is an implementation-level artifact; users do not
 edit it through the settings file. Users wanting to force-redact
 a matching string add it to the literal-string redaction list.
+
+The allowlist is data, not code. The implementer should design it so
+new entries can be added without a full release of the utility — a
+text or JSON file shipped alongside the binary, a remotely-fetchable
+update list, or any equivalent mechanism. False positives in
+production tend to be noticed quickly, and a slow release cycle for
+allowlist changes degrades user trust faster than any other failure
+mode in the redaction layer.
 
 ### Replacement behavior
 

@@ -6,6 +6,14 @@ must carry, the structural shape it takes, and the constraints the
 writer must honour. Implementers choose the specific field names and
 small encoding details; the semantic contract is fixed.
 
+> **Note on field names.** The illustrative schema shown later in this
+> document uses placeholder field names chosen by this specification for
+> the purpose of giving structure to the examples. The implementer
+> selects their own names. The semantic content each field represents
+> is the contract; the spelling of the name is not. Two implementations
+> can both conform to this specification while using different field
+> spellings, as long as each field's semantic content is preserved.
+
 ## File shape
 
 - One record per line.
@@ -151,20 +159,26 @@ The manifest accompanying an upload carries:
 Both breakdowns are keyed by the canonical normalized form of the
 underlying string (see "Canonicalization of breakdown keys" below).
 
+The manifest's own key names are an implementer choice. The semantic
+contents above are required; the spellings used to label them in the
+manifest file itself are at the implementer's discretion, subject only
+to the manifest being self-describing enough that a downstream
+consumer can interpret it without external documentation.
+
 ## Canonicalization of breakdown keys
 
-For stable grouping and aggregation, breakdown keys are normalized
-before use:
-
-- **Model identifier normalization.** Strip whitespace. If the
-  identifier is a slash-separated provider/model pair, take only
-  the last segment. Replace underscores and periods with hyphens.
-  Lowercase is not enforced because some platforms are case-
-  sensitive.
-- **Grouping label normalization.** Strip whitespace. If the label
-  is a colon-prefixed form (origin-prefix plus colon plus local
-  label), strip the prefix. Lowercase, then replace underscores
-  and periods with hyphens.
+Breakdown keys are canonicalized by a stable transformation the
+implementer chooses, applied consistently across the utility. The
+purpose of canonicalization is to keep aggregations stable: two
+records whose underlying identifiers are the same up to incidental
+formatting differences must contribute to the same breakdown row.
+A typical transformation strips whitespace, drops origin-category
+prefixes where present, and replaces common word-separator
+punctuation with a single canonical separator. Whether to lowercase
+is an implementer judgement call — some platforms are
+case-sensitive in identifier semantics, and aggressive lowercasing
+can collide distinct identifiers; conservative implementations
+preserve case and rely on punctuation normalization alone.
 
 ## Illustrative schema
 

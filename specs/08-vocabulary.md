@@ -4,6 +4,12 @@ This document defines the terms the specification uses with specific
 meaning. Every term here is invented by this specification for
 clarity; implementers pick their own names in their own product.
 
+> All terms defined here are abstract labels introduced by this
+> specification for the purpose of internal cross-referencing.
+> Implementers may adopt these terms verbatim or invent their own
+> equivalents; what matters is internal consistency within the
+> implementation, not adherence to the spelling used here.
+
 ## Structural terms
 
 **Record.** One conversation exported from one source. The unit that

@@ -32,8 +32,15 @@ Database shape:
 
 1. Open the embedded database in read-only mode.
 2. Query the outer namespace for all conversations. For each
-   conversation, read the first turn's payload to determine the
-   workspace URI the conversation was tied to.
+   conversation, the workspace URI is read by walking the
+   conversation's first several turn payloads until one carries
+   a workspace identifier. Some stored conversations place this
+   identifier on the opening turn; others delay it to a later
+   turn once the workspace context has been established. The
+   extractor walks a bounded prefix — a small single-digit
+   number of turns is sufficient in practice — and falls back
+   to the unknown-workspace bucket only if no turn in that
+   prefix exposes a workspace identifier.
 3. Index conversations by their workspace URI (stripping any
    `file://` prefix). Unknown or empty workspace URIs collect
    under a placeholder.

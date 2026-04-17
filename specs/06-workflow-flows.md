@@ -83,11 +83,18 @@ because scope has not yet been fixed.
    user chooses a specific origin category, the pseudo-value
    for "all" is not used; if they want everything, they choose
    "all." The choice is persisted via the configure capability.
-4. The user reviews the grouping list and names the groupings
-   they want to exclude. The utility persists these as an
-   exclusion list via the configure capability. Setting any
-   exclusion implicitly marks the grouping selection as
-   confirmed.
+4. The user reviews the grouping list and decides one of two
+   things:
+   a. **Include all detected groupings.** The user explicitly
+      confirms the grouping list as-is, with no exclusions.
+      This is persisted via a dedicated confirmation flag in
+      the settings, not via an empty exclusion list. This is
+      a common case for users who want everything they have.
+   b. **Exclude some groupings.** The user names the groupings
+      they want to remove. The utility persists these as an
+      exclusion list via the configure capability. Setting any
+      exclusion implicitly marks the grouping selection as
+      confirmed; no separate confirmation flag is needed.
 5. The user registers any literal strings to always redact
    (for example, internal project names, client names, private
    URLs) and any username-like handles to anonymize (for
@@ -218,12 +225,23 @@ written a file to disk.
 - **Findings path.** If the user's own inspection or the
   built-in scan surfaces real sensitive content, the user
   registers additional literal redactions via Flow 2's
-  configure step and re-runs Flow 3 on the same output
-  path (or a different one). Re-running Flow 3 does not
-  automatically invalidate the stored attestations — if
-  the user re-extracted under the same terms, the file
-  and the attestations still agree — but the user should
-  re-run Flow 4 if the corpus has changed materially.
+  configure step and re-runs Flow 3. Re-running Flow 3
+  produces a new file (or overwrites the old one). The
+  previously-stored attestations refer to the file that
+  existed at attest time and are no longer valid for the
+  re-extracted file.
+
+  The utility must detect this and force a re-attestation.
+  Detection mechanisms include — but are not limited to —
+  comparing the path the new extraction wrote against the
+  path recorded in the last-attest record, comparing the
+  modification time of the file against the timestamp on
+  the last-attest record, comparing the byte size against
+  a stored last-extract record, or hashing a prefix of
+  the file. Implementer choice; what matters is that a
+  user who runs extract → attest → extract → publish
+  cannot publish without a fresh attest in between.
+
 - **Skip-full-name path.** If the user declines to share
   a name, the flow runs with only two text attestations
   that carry sensitive-entity and manual-review

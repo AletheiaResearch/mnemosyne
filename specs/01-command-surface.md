@@ -13,7 +13,14 @@ readability. Implementers should choose their own names.
 
 ## Summary table
 
-| Capability | Purpose | Requires prior stage | Writes persistent state | Writes output file | Performs network I/O |
+The "Requires prior stage" column references the abstract stage machine
+defined in `02-configuration-model.md` rather than any specific stage
+numbering an implementer might choose. A capability that "requires
+scope confirmed" requires the conditions associated with that abstract
+stage in the state machine, regardless of how the implementer labels
+or numbers stages internally.
+
+| Capability | Purpose | Requires prior abstract stage | Writes persistent state | Writes output file | Performs network I/O |
 |---|---|---|---|---|---|
 | install-helper | Install agent-integration assets into a caller-chosen project | none | no | yes (agent-integration asset) | may fetch integration assets |
 | survey | Discover available origin groupings, check credential state, produce a machine-readable progress summary | none | yes (stage marker) | no | may query dataset platform for credential presence |
@@ -238,7 +245,13 @@ artefact. Without this record, the utility refuses to publish.
   of the stage marker.
 
 **Validation rules applied to the attestation inputs.**
-The utility must reject the operation unless all of the following hold:
+The utility must reject the operation unless all of the following hold.
+Numeric defaults given below are reasonable defaults chosen by this
+specification; the implementer may raise these but should not lower
+them below the point where perfunctory text would pass. The intent of
+each rule is the contract; the specific number is a default
+implementers may tune upward as their judgement and user-feedback
+suggest.
 
 - Each of the three attestation texts is at least a configurable
   minimum number of characters long. The default minimum is 20
@@ -285,7 +298,13 @@ platform identified by a repository-style identifier.
 - A publication-approval attestation: free-form text in which the
   operator states that the user explicitly approved publishing.
 
-**Preconditions.**
+**Preconditions.** The preconditions below are not ordered. The
+implementer may evaluate them in any order, and on failure the utility
+must report **every** failed precondition rather than short-circuiting
+on the first. Surfacing the complete failure set in a single response
+lets the user (or the user's agent) fix everything at once instead of
+discovering the problems one at a time.
+
 - The stage marker must indicate that an attested export is on disk.
 - The attestation record must carry valid values for all required
   review actions (re-validated here, independent of `attest`).

@@ -6,6 +6,18 @@ specifies the semantic content of that state. Implementers choose the
 storage file format, the exact key names, and the on-disk layout — subject
 only to the constraints below.
 
+> **Note on key names.** Every key name used below in backticks
+> (`repo-id`, `origin-scope`, `grouping-exclusions`, `custom-redactions`,
+> `custom-handles`, `scope-confirmed`, `phase-marker`, `last-extract`,
+> `reviewer-statements`, `verification-record`, `last-attest`,
+> `publication-attestation`) is an abstract label introduced by this
+> specification for the purpose of referring to the corresponding
+> settings entry within these documents. They are not mandated identifiers
+> for the on-disk file. Implementers choose whatever concrete identifiers
+> suit their language conventions, file-format conventions, and project
+> style. What matters is that each settings entry described here has a
+> corresponding identifier in the implementation, used consistently.
+
 ## Storage location
 
 The persistent settings live in a single file inside a per-user
@@ -224,11 +236,16 @@ A user must be able to open the settings file in a text editor and
 - remove entries from any list,
 - reset the stage marker to a prior stage,
 - clear attestation state to force a re-run,
+- introduce or retain keys the current version of the utility does
+  not recognize — for example because they were written by a newer
+  version, or because the user is preparing to upgrade and wants
+  in-progress edits to survive the transition,
 
 without corrupting the file's schema. The implementation must treat
 unknown keys as non-fatal (forward compatibility) and must not rewrite
 the file in a way that erases user edits unrelated to the operation
-in flight.
+in flight. A user upgrading from an older version of the utility must
+not lose their settings in the upgrade.
 
 ## Display masking
 
