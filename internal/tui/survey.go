@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/AletheiaResearch/mnemosyne/internal/config"
 	"github.com/AletheiaResearch/mnemosyne/internal/tui/common"
 )
 
@@ -46,6 +47,8 @@ type surveyScreen struct {
 	raw        string
 	viewport   viewport.Model
 	vpReady    bool
+	selected   int
+	status     string
 }
 
 func newSurveyScreen(configPath string) *surveyScreen {
@@ -81,14 +84,37 @@ func (s *surveyScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				s.err = "parse survey output: " + err.Error()
 			}
 		}
+		s.applyExclusions()
+		s.clampSelection()
 		s.refreshGroupings()
+		s.scrollToSelected()
 		return s, nil
 	case tea.KeyMsg:
-		if msg.String() == "r" && !s.running {
-			s.running = true
-			s.err = ""
-			s.loaded = false
-			return s, runCommand(s.configPath, "survey")
+		switch msg.String() {
+		case "r":
+			if !s.running {
+				s.running = true
+				s.err = ""
+				s.status = ""
+				s.loaded = false
+				return s, runCommand(s.configPath, "survey")
+			}
+			return s, nil
+		case "up", "k":
+			s.moveSelection(-1)
+			return s, nil
+		case "down", "j":
+			s.moveSelection(1)
+			return s, nil
+		case "home", "g":
+			s.jumpSelection(0)
+			return s, nil
+		case "end", "G":
+			s.jumpSelection(len(s.result.Groupings) - 1)
+			return s, nil
+		case " ", "x":
+			s.toggleExclusion()
+			return s, nil
 		}
 	}
 	if s.vpReady {
@@ -136,7 +162,7 @@ func (s *surveyScreen) View() string {
 }
 
 func (s *surveyScreen) FooterHints() string {
-	return common.HintLine("↑↓ scroll", "r reload", "esc back")
+	return common.HintLine("↑↓ select", "space toggle exclude", "pgup/pgdn scroll", "r reload", "esc back")
 }
 
 func (s *surveyScreen) FooterStatus() string {
@@ -146,8 +172,17 @@ func (s *surveyScreen) FooterStatus() string {
 	if s.err != "" {
 		return "error"
 	}
+	if s.status != "" {
+		return s.status
+	}
 	if s.loaded {
-		return fmt.Sprintf("%d groupings", len(s.result.Groupings))
+		excluded := 0
+		for _, g := range s.result.Groupings {
+			if g.Excluded {
+				excluded++
+			}
+		}
+		return fmt.Sprintf("%d groupings · %d excluded", len(s.result.Groupings), excluded)
 	}
 	return ""
 }
@@ -254,46 +289,200 @@ func (s *surveyScreen) groupingsTable(width int) string {
 		return common.MutedStyle.Render("(no groupings detected)")
 	}
 	const (
+		cursorW   = 2
 		originW   = 14
 		recordsW  = 8
 		bytesW    = 10
 		excludedW = 3
 	)
-	idW := width - originW - recordsW - bytesW - excludedW - 4
+	idW := width - cursorW - originW - recordsW - bytesW - excludedW - 4
 	if idW < 10 {
 		idW = 10
 	}
 
 	header := lipgloss.JoinHorizontal(lipgloss.Top,
+		common.LabelStyle.Copy().Width(cursorW).Render(""),
 		common.LabelStyle.Copy().Width(originW).Render("origin"),
 		common.LabelStyle.Copy().Width(idW).Render("id"),
 		common.LabelStyle.Copy().Width(recordsW).Align(lipgloss.Right).Render("records"),
 		common.LabelStyle.Copy().Width(bytesW).Align(lipgloss.Right).Render("size"),
 		common.LabelStyle.Copy().Width(excludedW).Align(lipgloss.Right).Render(""),
 	)
-	rule := common.SubtleStyle.Render(strings.Repeat("─", originW+idW+recordsW+bytesW+excludedW))
+	rule := common.SubtleStyle.Render(strings.Repeat("─", cursorW+originW+idW+recordsW+bytesW+excludedW))
 
 	rows := []string{header, rule}
-	for _, g := range s.result.Groupings {
-		idStyle := common.ValueStyle
-		idText := g.ID
-		if g.DisplayLabel != "" && g.DisplayLabel != g.ID {
-			idText = g.ID + common.MutedStyle.Render(" · "+g.DisplayLabel)
-		}
-		mark := ""
-		if g.Excluded {
-			mark = common.WarnStyle.Render("×")
-			idStyle = common.MutedStyle
-		}
-		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top,
-			common.AccentStyle.Copy().Width(originW).Render(truncate(g.Origin, originW-1)),
-			idStyle.Copy().Width(idW).Render(truncate(idText, idW-1)),
-			common.ValueStyle.Copy().Width(recordsW).Align(lipgloss.Right).Render(fmt.Sprintf("%d", g.EstimatedRecords)),
-			common.ValueStyle.Copy().Width(bytesW).Align(lipgloss.Right).Render(humanBytes(g.EstimatedBytes)),
-			common.WarnStyle.Copy().Width(excludedW).Align(lipgloss.Right).Render(mark),
-		))
+	for i, g := range s.result.Groupings {
+		rows = append(rows, s.renderGroupingRow(g, i, cursorW, originW, idW, recordsW, bytesW, excludedW))
 	}
 	return strings.Join(rows, "\n")
+}
+
+func (s *surveyScreen) renderGroupingRow(g surveyGrouping, idx, cursorW, originW, idW, recordsW, bytesW, excludedW int) string {
+	selected := idx == s.selected
+
+	idText := g.ID
+	if g.DisplayLabel != "" && g.DisplayLabel != g.ID {
+		idText = g.DisplayLabel
+	}
+	originText := truncate(g.Origin, originW-1)
+	idDisplay := truncate(idText, idW-1)
+	recordsText := fmt.Sprintf("%d", g.EstimatedRecords)
+	sizeText := humanBytes(g.EstimatedBytes)
+	markText := ""
+	if g.Excluded {
+		markText = "×"
+	}
+	cursorText := ""
+	if selected {
+		cursorText = "▸"
+	}
+
+	if selected {
+		row := lipgloss.JoinHorizontal(lipgloss.Top,
+			plainCell(cursorW, lipgloss.Left, cursorText),
+			plainCell(originW, lipgloss.Left, originText),
+			plainCell(idW, lipgloss.Left, idDisplay),
+			plainCell(recordsW, lipgloss.Right, recordsText),
+			plainCell(bytesW, lipgloss.Right, sizeText),
+			plainCell(excludedW, lipgloss.Right, markText),
+		)
+		return lipgloss.NewStyle().
+			Background(common.ColorBrand).
+			Foreground(common.ColorOnBrand).
+			Bold(true).
+			Render(row)
+	}
+
+	idStyle := common.ValueStyle
+	if g.Excluded {
+		idStyle = common.MutedStyle
+	}
+	markStyle := common.WarnStyle
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		common.SubtleStyle.Copy().Width(cursorW).Render(cursorText),
+		common.AccentStyle.Copy().Width(originW).Render(originText),
+		idStyle.Copy().Width(idW).Render(idDisplay),
+		common.ValueStyle.Copy().Width(recordsW).Align(lipgloss.Right).Render(recordsText),
+		common.ValueStyle.Copy().Width(bytesW).Align(lipgloss.Right).Render(sizeText),
+		markStyle.Copy().Width(excludedW).Align(lipgloss.Right).Render(markText),
+	)
+}
+
+func plainCell(width int, align lipgloss.Position, text string) string {
+	return lipgloss.NewStyle().Width(width).Align(align).Render(text)
+}
+
+func (s *surveyScreen) applyExclusions() {
+	excluded := make(map[string]struct{}, len(s.result.GroupingExclusions))
+	for _, item := range s.result.GroupingExclusions {
+		excluded[item] = struct{}{}
+	}
+	for i := range s.result.Groupings {
+		_, s.result.Groupings[i].Excluded = excluded[s.result.Groupings[i].DisplayLabel]
+	}
+}
+
+func (s *surveyScreen) clampSelection() {
+	if s.selected < 0 {
+		s.selected = 0
+	}
+	if s.selected >= len(s.result.Groupings) {
+		s.selected = len(s.result.Groupings) - 1
+	}
+	if s.selected < 0 {
+		s.selected = 0
+	}
+}
+
+func (s *surveyScreen) moveSelection(delta int) {
+	if len(s.result.Groupings) == 0 {
+		return
+	}
+	s.selected += delta
+	s.clampSelection()
+	s.refreshGroupings()
+	s.scrollToSelected()
+}
+
+func (s *surveyScreen) jumpSelection(idx int) {
+	if len(s.result.Groupings) == 0 {
+		return
+	}
+	s.selected = idx
+	s.clampSelection()
+	s.refreshGroupings()
+	s.scrollToSelected()
+}
+
+func (s *surveyScreen) scrollToSelected() {
+	if !s.vpReady || len(s.result.Groupings) == 0 {
+		return
+	}
+	// Table layout: header (1) + rule (1) + rows; selected row at index
+	// 2 + s.selected in the rendered content.
+	rowY := 2 + s.selected
+	top := s.viewport.YOffset
+	if rowY < top {
+		s.viewport.SetYOffset(rowY)
+		return
+	}
+	bottom := top + s.viewport.Height - 1
+	if rowY > bottom {
+		s.viewport.SetYOffset(rowY - s.viewport.Height + 1)
+	}
+}
+
+func (s *surveyScreen) toggleExclusion() {
+	if len(s.result.Groupings) == 0 {
+		return
+	}
+	s.clampSelection()
+	label := s.result.Groupings[s.selected].DisplayLabel
+	if strings.TrimSpace(label) == "" {
+		s.status = "cannot exclude: grouping has no display label"
+		return
+	}
+
+	cfg, err := config.Load(s.configPath)
+	if err != nil {
+		s.err = "load config: " + err.Error()
+		return
+	}
+
+	next := make([]string, 0, len(cfg.ExcludedGroupings)+1)
+	excluded := false
+	for _, item := range cfg.ExcludedGroupings {
+		if item == label {
+			excluded = true
+			continue
+		}
+		next = append(next, item)
+	}
+	if !excluded {
+		next = append(next, label)
+	}
+	cfg.ExcludedGroupings = next
+	if !excluded {
+		cfg.ScopeConfirmed = true
+	}
+	cfg.RefreshPhase(false)
+
+	if err := config.Save(s.configPath, cfg); err != nil {
+		s.err = "save config: " + err.Error()
+		return
+	}
+
+	s.result.GroupingExclusions = append([]string(nil), cfg.ExcludedGroupings...)
+	s.result.Phase = string(cfg.PhaseMarker)
+	s.result.ScopeConfirmed = cfg.ScopeConfirmed
+	s.applyExclusions()
+	s.refreshGroupings()
+	s.scrollToSelected()
+	if excluded {
+		s.status = "included " + label
+	} else {
+		s.status = "excluded " + label
+	}
 }
 
 func phasePill(phase string) string {
