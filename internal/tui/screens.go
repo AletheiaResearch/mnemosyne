@@ -53,23 +53,6 @@ func (s *formScreen) SetSize(width, height int) {
 	s.height = height
 }
 
-type commandScreen struct {
-	title      string
-	intro      string
-	configPath string
-	args       []string
-	running    bool
-	output     string
-	err        string
-	width      int
-	height     int
-}
-
-func (s *commandScreen) SetSize(width, height int) {
-	s.width = width
-	s.height = height
-}
-
 func newScreen(key screenKey, configPath string) tea.Model {
 	cfg, _ := config.Load(configPath)
 	switch key {
@@ -198,12 +181,7 @@ func newScreen(key screenKey, configPath string) tea.Model {
 			},
 		}
 	case screenRunlog:
-		return &commandScreen{
-			title:      "Run Log",
-			intro:      "Show persisted workflow state. Press r to refresh after running extract, attest, or publish.",
-			configPath: configPath,
-			args:       []string{"runlog"},
-		}
+		return newRunlogScreen(configPath)
 	case screenTransform:
 		return &formScreen{
 			title:      "Transform",
@@ -249,58 +227,6 @@ func newScreen(key screenKey, configPath string) tea.Model {
 	}
 }
 
-func (s *commandScreen) Init() tea.Cmd {
-	s.running = true
-	return runCommand(s.configPath, s.args...)
-}
-
-func (s *commandScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case commandResultMsg:
-		s.running = false
-		s.output = msg.output
-		s.err = errorText(msg.err)
-	case tea.KeyMsg:
-		if msg.String() == "r" && !s.running {
-			s.running = true
-			s.err = ""
-			return s, runCommand(s.configPath, s.args...)
-		}
-	}
-	return s, nil
-}
-
-func (s *commandScreen) View() string {
-	parts := []string{
-		common.TitleStyle.Render(s.title),
-		"",
-		common.SubtitleStyle.Render(s.intro),
-	}
-	if s.running {
-		parts = append(parts, "", common.AccentStyle.Render("Running…"))
-	}
-	if s.err != "" {
-		parts = append(parts, "", common.ErrorStyle.Render("Error: ")+s.err)
-	}
-	if strings.TrimSpace(s.output) != "" {
-		parts = append(parts, "", s.output)
-	}
-	return strings.Join(parts, "\n")
-}
-
-func (s *commandScreen) FooterHints() string {
-	return common.HintLine("r reload", "esc back", "q quit")
-}
-
-func (s *commandScreen) FooterStatus() string {
-	if s.running {
-		return "running…"
-	}
-	if s.err != "" {
-		return "error"
-	}
-	return ""
-}
 
 func (s *formScreen) Init() tea.Cmd {
 	return nil
