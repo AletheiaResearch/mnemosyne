@@ -118,6 +118,12 @@ func (s *surveyScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if s.vpReady {
+		if wheel, ok := msg.(tea.MouseMsg); ok {
+			if (wheel.Button == tea.MouseButtonWheelUp && s.viewport.AtTop()) ||
+				(wheel.Button == tea.MouseButtonWheelDown && s.viewport.AtBottom()) {
+				return s, nil
+			}
+		}
 		var cmd tea.Cmd
 		s.viewport, cmd = s.viewport.Update(msg)
 		return s, cmd

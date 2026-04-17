@@ -165,20 +165,29 @@ func isReservedEmailDomain(domain string) bool {
 		strings.HasSuffix(domain, ".invalid")
 }
 
-func allowIP(value string) bool {
-	ip := net.ParseIP(value)
-	if ip == nil {
-		return true
-	}
-	private := []string{
+var privateIPBlocks = func() []*net.IPNet {
+	cidrs := []string{
 		"10.0.0.0/8",
 		"172.16.0.0/12",
 		"192.168.0.0/16",
 		"127.0.0.0/8",
 	}
-	for _, cidr := range private {
-		_, block, _ := net.ParseCIDR(cidr)
-		if block != nil && block.Contains(ip) {
+	blocks := make([]*net.IPNet, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		if _, block, err := net.ParseCIDR(cidr); err == nil {
+			blocks = append(blocks, block)
+		}
+	}
+	return blocks
+}()
+
+func allowIP(value string) bool {
+	ip := net.ParseIP(value)
+	if ip == nil {
+		return true
+	}
+	for _, block := range privateIPBlocks {
+		if block.Contains(ip) {
 			return true
 		}
 	}
