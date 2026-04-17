@@ -59,3 +59,17 @@ func TestAnonymizerRewritesShortHandleInsideHomeStylePath(t *testing.T) {
 		t.Fatalf("expected path separator to be preserved, got %q", out)
 	}
 }
+
+func TestAnonymizerDoesNotRewriteShortHandlePrefixCollisions(t *testing.T) {
+	t.Parallel()
+
+	anonymizer, err := NewAnonymizer([]string{"xy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, _ := anonymizer.ApplyPath("/Users/xyz/project", 0)
+	if out != "/Users/xyz/project" {
+		t.Fatalf("expected unrelated path to stay unchanged, got %q", out)
+	}
+}

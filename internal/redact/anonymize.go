@@ -150,7 +150,7 @@ func (a *Anonymizer) applyShortPathTokens(input string, count int) (string, int)
 	out := input
 	for identifier, token := range a.shortPathTokens {
 		for _, pattern := range shortIdentifierPathPatterns(identifier) {
-			replaced, matches := stringsReplaceAll(out, pattern, token)
+			replaced, matches := replaceHomeWithBoundary(out, pattern, token)
 			out = replaced
 			count += matches
 		}
