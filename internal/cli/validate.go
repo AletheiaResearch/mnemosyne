@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantumlyy/mnemosyne/internal/schema"
+	"github.com/AletheiaResearch/mnemosyne/internal/schema"
 )
 
 func newValidateCommand(rt *runtime) *cobra.Command {

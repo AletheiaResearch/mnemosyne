@@ -3,7 +3,7 @@ package source
 import (
 	"log/slog"
 
-	"github.com/Quantumlyy/mnemosyne/internal/redact"
+	"github.com/AletheiaResearch/mnemosyne/internal/redact"
 )
 
 type ExtractionContext struct {

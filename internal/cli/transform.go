@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Quantumlyy/mnemosyne/internal/schema"
-	"github.com/Quantumlyy/mnemosyne/internal/serialize"
+	"github.com/AletheiaResearch/mnemosyne/internal/schema"
+	"github.com/AletheiaResearch/mnemosyne/internal/serialize"
 )
 
 func newTransformCommand(rt *runtime) *cobra.Command {

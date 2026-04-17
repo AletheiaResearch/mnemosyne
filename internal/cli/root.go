@@ -11,9 +11,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
-	"github.com/Quantumlyy/mnemosyne/internal/config"
-	"github.com/Quantumlyy/mnemosyne/internal/tui"
-	"github.com/Quantumlyy/mnemosyne/internal/version"
+	"github.com/AletheiaResearch/mnemosyne/internal/config"
+	"github.com/AletheiaResearch/mnemosyne/internal/tui"
+	"github.com/AletheiaResearch/mnemosyne/internal/version"
 )
 
 type runtime struct {
@@ -70,6 +70,7 @@ func newRootCommand(rt *runtime) *cobra.Command {
 
 	cmd.AddCommand(
 		newSurveyCommand(rt),
+		newInspectCommand(rt),
 		newConfigureCommand(rt),
 		newExtractCommand(rt),
 		newAttestCommand(rt),

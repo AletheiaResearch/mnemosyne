@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	"github.com/Quantumlyy/mnemosyne/internal/cli"
+	"github.com/AletheiaResearch/mnemosyne/internal/cli"
 )
 
 func main() {

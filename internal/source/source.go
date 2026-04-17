@@ -3,7 +3,7 @@ package source
 import (
 	"context"
 
-	"github.com/Quantumlyy/mnemosyne/internal/schema"
+	"github.com/AletheiaResearch/mnemosyne/internal/schema"
 )
 
 type Grouping struct {

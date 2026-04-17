@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Quantumlyy/mnemosyne/internal/schema"
+	"github.com/AletheiaResearch/mnemosyne/internal/schema"
 )
 
 type Flat struct{}

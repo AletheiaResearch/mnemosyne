@@ -3,7 +3,7 @@ package serialize
 import (
 	"strings"
 
-	"github.com/Quantumlyy/mnemosyne/internal/schema"
+	"github.com/AletheiaResearch/mnemosyne/internal/schema"
 )
 
 type Zephyr struct{}

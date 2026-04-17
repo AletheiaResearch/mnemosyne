@@ -3,7 +3,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/Quantumlyy/mnemosyne/internal/config"
+	"github.com/AletheiaResearch/mnemosyne/internal/config"
 )
 
 func newConfigureCommand(rt *runtime) *cobra.Command {

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Quantumlyy/mnemosyne/schemas/canonical-v1.json",
+  "$id": "https://github.com/AletheiaResearch/mnemosyne/schemas/canonical-v1.json",
   "title": "Mnemosyne Canonical Record",
   "type": "object",
   "required": [

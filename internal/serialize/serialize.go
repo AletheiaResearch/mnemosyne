@@ -1,6 +1,6 @@
 package serialize
 
-import "github.com/Quantumlyy/mnemosyne/internal/schema"
+import "github.com/AletheiaResearch/mnemosyne/internal/schema"
 
 type Serializer interface {
 	Name() string
