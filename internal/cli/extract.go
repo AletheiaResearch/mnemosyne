@@ -148,10 +148,14 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 			}
 
 			cfg.LastExtract = &config.LastExtract{
-				Timestamp:   time.Now().UTC().Format(time.RFC3339),
-				RecordCount: summary.RecordCount,
-				Scope:       scope,
-				OutputPath:  output,
+				Timestamp:      time.Now().UTC().Format(time.RFC3339),
+				RecordCount:    summary.RecordCount,
+				SkippedRecords: summary.SkippedRecords,
+				RedactionCount: summary.RedactionCount,
+				InputTokens:    summary.InputTokens,
+				OutputTokens:   summary.OutputTokens,
+				Scope:          scope,
+				OutputPath:     output,
 			}
 			cfg.ReviewerStatements = nil
 			cfg.VerificationRecord = nil
