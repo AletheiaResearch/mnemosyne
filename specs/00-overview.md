@@ -120,3 +120,8 @@ remaining documents specify the individual pieces:
 - Failure handling and recovery (see `07-failure-and-recovery.md`).
 - Defined vocabulary used throughout these specs
   (see `08-vocabulary.md`).
+- Known third-party source products and their real on-disk paths,
+  file formats, and schema details (see
+  `99-source-products-appendix.md`). Consult this appendix for the
+  concrete interoperability information an implementer needs in
+  order to read each supported product's data.

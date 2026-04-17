@@ -125,6 +125,17 @@ Each per-category file covers:
 - **Inherent limitations.** What information is unavailable from
   the source and therefore absent from the output.
 
+## Concrete source products
+
+For the real third-party products currently known to produce data
+of each category — with their exact storage paths per operating
+system, file formats, and schema facts — see
+`../99-source-products-appendix.md`. The per-category files in
+this directory describe storage **shapes** that one or more real
+products happen to fit; the appendix provides the specific
+interoperability information an implementer needs in order to
+read any given product's data.
+
 ## Optional metadata-only sources
 
 Some inputs are not primary conversation stores at all. Rather than
