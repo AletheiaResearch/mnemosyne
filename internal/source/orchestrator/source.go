@@ -249,7 +249,7 @@ func (s *Source) extractSession(ctx context.Context, db *sql.DB, schemaInfo dbSc
 		}
 		turn := schema.Turn{
 			Role:      normalizeRole(role),
-			Timestamp: firstNonEmpty(sentAt.String, createdAt.String),
+			Timestamp: source.NormalizeTimestamp(firstNonEmpty(sentAt.String, createdAt.String)),
 			Text:      content,
 		}
 		if messageModel.Valid && messageModel.String != "" {
@@ -262,8 +262,8 @@ func (s *Source) extractSession(ctx context.Context, db *sql.DB, schemaInfo dbSc
 			continue
 		}
 		record.Turns = append(record.Turns, turn)
-		record.StartedAt = source.EarliestTimestamp(record.StartedAt, source.NormalizeTimestamp(turn.Timestamp))
-		record.EndedAt = source.LatestTimestamp(record.EndedAt, source.NormalizeTimestamp(turn.Timestamp))
+		record.StartedAt = source.EarliestTimestamp(record.StartedAt, turn.Timestamp)
+		record.EndedAt = source.LatestTimestamp(record.EndedAt, turn.Timestamp)
 	}
 
 	record.Usage = schema.Usage{
