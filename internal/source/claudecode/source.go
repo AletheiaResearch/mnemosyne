@@ -256,7 +256,9 @@ func assembleClaudeRecord(entries []map[string]any, recordID string) schema.Reco
 			record.WorkingDir = source.ExtractString(entry, "cwd")
 		}
 		if record.Branch == "" {
-			record.Branch = source.ExtractString(entry, "gitBranch")
+			if branch := source.ExtractString(entry, "gitBranch"); branch != "" && branch != "HEAD" {
+				record.Branch = branch
+			}
 		}
 
 		switch typ {
