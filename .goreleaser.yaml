@@ -26,7 +26,6 @@ archives:
       - tar.gz
     files:
       - README.md
-      - docs/**
       - schemas/**
 
 brews:

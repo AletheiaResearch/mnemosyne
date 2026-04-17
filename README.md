@@ -24,10 +24,6 @@ Or use subcommands directly:
 
 The shorthand `mem` is installed as a symlink.
 
-## Configuration and format
-
-See [docs/schema.md](docs/schema.md) for the output record format and [docs/sources.md](docs/sources.md) for per-source extraction details.
-
 ## License
 
 MIT for the tool. Datasets you produce carry whatever license you assign at publish time.
