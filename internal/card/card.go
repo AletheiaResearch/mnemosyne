@@ -86,6 +86,79 @@ func RenderDescription(summary Summary, fileName string, license string) string 
 	return builder.String()
 }
 
+// RenderIsolateDescription renders the README.md uploaded alongside
+// manifest.mnemosyne and per-session JSONL files in isolate mode. The layout
+// mirrors HuggingFace's Agent Trace Viewer expectations so datasets are
+// auto-tagged `Traces` and viewable per-session.
+func RenderIsolateDescription(header ManifestHeader, entries []ManifestEntry, license string) string {
+	var builder strings.Builder
+	builder.WriteString("# Mnemosyne Isolate Dataset\n\n")
+	builder.WriteString("Native Claude Code and Codex session traces exported by mnemosyne with per-session fidelity preserved. ")
+	builder.WriteString("Each session is stored under its original format so the [HuggingFace Agent Trace Viewer](https://huggingface.co/changelog/agent-trace-viewer) ")
+	builder.WriteString("renders them individually.\n\n")
+
+	byFormat := make(map[string]int)
+	totalLines := 0
+	for _, entry := range entries {
+		byFormat[entry.Format]++
+		totalLines += entry.Lines
+	}
+
+	builder.WriteString("## Summary\n\n")
+	builder.WriteString("- Sessions: " + itoa(len(entries)) + "\n")
+	builder.WriteString("- Total lines: " + itoa(totalLines) + "\n")
+	builder.WriteString("- Attach images: " + boolYesNo(header.AttachImages) + "\n")
+	if header.PipelineFingerprint != "" {
+		builder.WriteString("- Pipeline fingerprint: `" + header.PipelineFingerprint + "`\n")
+	}
+	if header.ConfigFingerprint != "" {
+		builder.WriteString("- Config fingerprint: `" + header.ConfigFingerprint + "`\n")
+	}
+	if header.ExportedAt != "" {
+		builder.WriteString("- Exported at: " + header.ExportedAt + "\n")
+	}
+	if license != "" {
+		builder.WriteString("- License: " + license + "\n")
+	}
+
+	if len(byFormat) > 0 {
+		builder.WriteString("\n## Sessions by Format\n\n")
+		formats := make([]string, 0, len(byFormat))
+		for format := range byFormat {
+			formats = append(formats, format)
+		}
+		sort.Strings(formats)
+		builder.WriteString("| Format | Sessions |\n| --- | ---: |\n")
+		for _, format := range formats {
+			builder.WriteString("| " + format + " | " + itoa(byFormat[format]) + " |\n")
+		}
+	}
+
+	builder.WriteString("\n## Layout\n\n")
+	builder.WriteString("```\n")
+	builder.WriteString("claudecode/<session>.jsonl   # native Claude Code session lines\n")
+	builder.WriteString("codex/<session>.jsonl        # native Codex session lines\n")
+	builder.WriteString("manifest.mnemosyne            # per-session hashes + redaction keys\n")
+	builder.WriteString("README.md                     # this file\n")
+	builder.WriteString("```\n")
+
+	builder.WriteString("\n## Load Example\n\n")
+	builder.WriteString("```python\n")
+	builder.WriteString("from datasets import load_dataset\n\n")
+	builder.WriteString("claudecode = load_dataset(\"json\", data_files=\"claudecode/*.jsonl\", split=\"train\")\n")
+	builder.WriteString("codex = load_dataset(\"json\", data_files=\"codex/*.jsonl\", split=\"train\")\n")
+	builder.WriteString("```\n")
+
+	return builder.String()
+}
+
+func boolYesNo(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
+}
+
 func update(rows map[string]Breakdown, key string, record schema.Record) {
 	row := rows[key]
 	row.Records++
