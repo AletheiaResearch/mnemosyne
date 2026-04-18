@@ -170,7 +170,7 @@ func inferToolsAndOrigins(path string) ([]serialize.ToolSchema, []string, error)
 	go func() {
 		defer pw.Close()
 		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+		scanner.Buffer(make([]byte, 0, 64*1024), serialize.MaxJSONLineBytes)
 		for scanner.Scan() {
 			line := scanner.Bytes()
 			if _, err := pw.Write(append(append([]byte{}, line...), '\n')); err != nil {
@@ -274,7 +274,7 @@ func resolveTransformSerializer(cmd *cobra.Command, defaults config.ChatTemplate
 
 func transformRecords(in io.Reader, out io.Writer, serializer serialize.Serializer) error {
 	scanner := bufio.NewScanner(in)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), serialize.MaxJSONLineBytes)
 	writer := bufio.NewWriter(out)
 
 	for scanner.Scan() {

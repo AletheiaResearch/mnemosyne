@@ -360,6 +360,64 @@ func TestResolveTransformToolsReadsToolsFile(t *testing.T) {
 	}
 }
 
+func TestTransformRecordsAcceptsLargeLines(t *testing.T) {
+	t.Parallel()
+
+	// Build a record whose JSONL encoding exceeds the old 8 MiB cap but stays
+	// under the 64 MiB limit the extract pipeline honours.
+	big := strings.Repeat("x", 9*1024*1024)
+	record := schema.Record{
+		RecordID: "rec-big",
+		Model:    "m",
+		Turns:    []schema.Turn{{Role: "assistant", Text: big}},
+	}
+	input := encodeRecordsJSONL(t, record)
+
+	var out bytes.Buffer
+	if err := transformRecords(bytes.NewBufferString(input), &out, serialize.Canonical{}); err != nil {
+		t.Fatalf("transformRecords rejected a 9 MiB line: %v", err)
+	}
+	if out.Len() == 0 {
+		t.Fatal("expected transformed output")
+	}
+}
+
+func TestInferToolsAndOriginsAcceptsLargeLines(t *testing.T) {
+	t.Parallel()
+
+	big := strings.Repeat("x", 9*1024*1024)
+	record := schema.Record{
+		RecordID: "rec-big",
+		Origin:   "claudecode",
+		Turns: []schema.Turn{
+			{Role: "user", Text: big},
+			{Role: "assistant", ToolCalls: []schema.ToolCall{
+				{Tool: "Read", Input: map[string]any{"file_path": "/tmp/x"}},
+			}},
+		},
+	}
+	path := filepath.Join(t.TempDir(), "big.jsonl")
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tools, origins, err := inferToolsAndOrigins(path)
+	if err != nil {
+		t.Fatalf("inferToolsAndOrigins rejected 9 MiB line: %v", err)
+	}
+	if len(origins) != 1 || origins[0] != "claudecode" {
+		t.Errorf("origins = %v, want [claudecode]", origins)
+	}
+	if len(tools) != 1 || tools[0].Name != "Read" {
+		t.Errorf("tools = %+v, want single Read", tools)
+	}
+}
+
 func TestTransformRecordsVicunaAlternationError(t *testing.T) {
 	t.Parallel()
 
