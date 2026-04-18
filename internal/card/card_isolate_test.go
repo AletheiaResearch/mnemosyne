@@ -32,7 +32,8 @@ func TestRenderIsolateDescription_MentionsFormatsAndFingerprints(t *testing.T) {
 		"| claudecode | 2 |",
 		"| codex | 1 |",
 		"manifest.mnemosyne",
-		`load_dataset("json", data_files="claudecode/*.jsonl"`,
+		`load_dataset("json", data_files="claudecode/**/*.jsonl"`,
+		`load_dataset("json", data_files="codex/**/*.jsonl"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered README missing %q. Got:\n%s", want, out)
@@ -73,6 +74,24 @@ func TestRenderIsolateDescription_MixedAttachImagesSurfaced(t *testing.T) {
 	// factually wrong given the mix.
 	if strings.Contains(out, "Attach images: yes\n") {
 		t.Errorf("README must not advertise dataset-wide yes when mix exists; got:\n%s", out)
+	}
+}
+
+// The Layout block documents where session files actually live in the
+// repo. Since extract namespaces sessions under a hash subdirectory
+// (to avoid collisions when the same session name appears in multiple
+// source directories), the README must advertise that structure — a
+// user copy-pasting the example must load real files, not empty globs.
+func TestRenderIsolateDescription_LayoutMatchesExtractPaths(t *testing.T) {
+	t.Parallel()
+	out := RenderIsolateDescription(ManifestHeader{}, nil, "")
+	for _, want := range []string{
+		"claudecode/<hash>/<session>.jsonl",
+		"codex/<hash>/<session>.jsonl",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Layout block missing %q; got:\n%s", want, out)
+		}
 	}
 }
 
