@@ -6,7 +6,7 @@ Supports Claude Code, Codex, Cursor, Gemini CLI, Kimi CLI, OpenClaw, opencode, a
 
 ## Install
 
-    brew install AletheiaResearch/tap/mnemosyne
+    brew install --cask AletheiaResearch/tap/mnemosyne
 
 ## Usage
 
