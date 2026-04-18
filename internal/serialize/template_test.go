@@ -486,6 +486,105 @@ func TestBuiltinTemplateNamesIncludesJinja(t *testing.T) {
 	}
 }
 
+func TestToolOutputRawFallbackRendersAsJSON(t *testing.T) {
+	record := schema.Record{
+		RecordID: "rec-raw",
+		Turns: []schema.Turn{
+			{Role: "assistant", ToolCalls: []schema.ToolCall{{
+				Tool:   "compute",
+				Output: &schema.ToolOutput{Raw: map[string]any{"value": 42}},
+			}}},
+		},
+	}
+	msgs := buildTemplateMessages(record)
+	if len(msgs) != 2 || msgs[1].Role != "tool" {
+		t.Fatalf("want assistant + tool messages, got %+v", msgs)
+	}
+	if msgs[1].Content != `{"value":42}` {
+		t.Errorf("tool message content = %q, want JSON of Raw", msgs[1].Content)
+	}
+
+	// String Raw passes through unchanged.
+	record.Turns[0].ToolCalls[0].Output = &schema.ToolOutput{Raw: "already text"}
+	msgs = buildTemplateMessages(record)
+	if msgs[1].Content != "already text" {
+		t.Errorf("string Raw = %q, want passthrough", msgs[1].Content)
+	}
+
+	// Text wins over Raw when both are present.
+	record.Turns[0].ToolCalls[0].Output = &schema.ToolOutput{Text: "explicit", Raw: map[string]any{"ignored": true}}
+	msgs = buildTemplateMessages(record)
+	if msgs[1].Content != "explicit" {
+		t.Errorf("Text should win over Raw: got %q", msgs[1].Content)
+	}
+}
+
+func TestJinjaContentIsListWhenAttachmentsPresent(t *testing.T) {
+	source := `{% for m in messages %}{% if m.content is string %}STR:{{m.content}}{% else %}{% for c in m.content %}{{c.type}}{% if c.text %}:{{c.text}}{% endif %}{% if c.url %}@{{c.url}}{% endif %};{% endfor %}{% endif %}
+{% endfor %}`
+	tmpl, err := newJinjaTemplate("inline-attach.jinja", source, TemplateOptions{})
+	if err != nil {
+		t.Fatalf("newJinjaTemplate: %v", err)
+	}
+	record := schema.Record{
+		RecordID: "rec-attach",
+		Turns: []schema.Turn{
+			{Role: "user", Text: "describe this", Attachments: []schema.ContentBlock{
+				{Type: "image", URL: "https://example.com/cat.png"},
+			}},
+			{Role: "assistant", Text: "a cat"},
+		},
+	}
+	out, err := tmpl.Serialize(record)
+	if err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+	content := out.(struct {
+		ID      string `json:"id"`
+		Model   string `json:"model"`
+		Content string `json:"content"`
+	}).Content
+	if !strings.Contains(content, "text:describe this;") {
+		t.Errorf("missing text block for user turn: %q", content)
+	}
+	if !strings.Contains(content, "image@https://example.com/cat.png;") {
+		t.Errorf("missing image block with URL: %q", content)
+	}
+	if !strings.Contains(content, "STR:a cat") {
+		t.Errorf("assistant turn without attachments should stay a string: %q", content)
+	}
+}
+
+func TestLlama32JsonEmitsImageToken(t *testing.T) {
+	tmpl, err := NewBuiltinTemplate("llama3.2_json", TemplateOptions{BOSToken: "<|begin_of_text|>"})
+	if err != nil {
+		t.Fatalf("NewBuiltinTemplate: %v", err)
+	}
+	record := schema.Record{
+		RecordID: "rec-img",
+		Turns: []schema.Turn{
+			{Role: "user", Text: "what is this?", Attachments: []schema.ContentBlock{
+				{Type: "image", URL: "https://example.com/x.png"},
+			}},
+		},
+	}
+	out, err := tmpl.Serialize(record)
+	if err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+	content := out.(struct {
+		ID      string `json:"id"`
+		Model   string `json:"model"`
+		Content string `json:"content"`
+	}).Content
+	if !strings.Contains(content, "<|image|>") {
+		t.Errorf("llama3.2_json should emit <|image|> for image attachments:\n%s", content)
+	}
+	if !strings.Contains(content, "what is this?") {
+		t.Errorf("llama3.2_json should still include the user text:\n%s", content)
+	}
+}
+
 func TestNewFileTemplateDispatchesByExtension(t *testing.T) {
 	dir := t.TempDir()
 	jpath := filepath.Join(dir, "x.jinja")

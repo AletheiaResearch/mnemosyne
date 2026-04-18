@@ -3,6 +3,7 @@ package serialize
 import (
 	"bytes"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -73,15 +74,16 @@ type templateContext struct {
 }
 
 type templateMessage struct {
-	Role       string
-	Content    string
-	Reasoning  string
-	Timestamp  string
-	Index      int
-	IsLast     bool
-	ToolCalls  []templateToolCall
-	ToolCallID string
-	Name       string
+	Role        string
+	Content     string
+	Reasoning   string
+	Timestamp   string
+	Index       int
+	IsLast      bool
+	ToolCalls   []templateToolCall
+	ToolCallID  string
+	Name        string
+	Attachments []schema.ContentBlock
 }
 
 type templateToolCall struct {
@@ -305,7 +307,7 @@ func messagesToJinja(messages []templateMessage) []map[string]any {
 	for i, m := range messages {
 		entry := map[string]any{
 			"role":    m.Role,
-			"content": m.Content,
+			"content": contentForJinja(m),
 			"index":   m.Index,
 			"is_last": m.IsLast,
 		}
@@ -348,6 +350,40 @@ func messagesToJinja(messages []templateMessage) []map[string]any {
 	return out
 }
 
+// contentForJinja emits either a plain string (no attachments — keeps
+// string-oriented templates like hermes/chatml/zephyr working) or the
+// OpenAI-style list of content blocks that multimodal Llama templates
+// expect when `message['content']` is iterated for image/text parts.
+func contentForJinja(m templateMessage) any {
+	if len(m.Attachments) == 0 {
+		return m.Content
+	}
+	blocks := make([]map[string]any, 0, len(m.Attachments)+1)
+	if m.Content != "" {
+		blocks = append(blocks, map[string]any{"type": "text", "text": m.Content})
+	}
+	for _, att := range m.Attachments {
+		block := map[string]any{"type": att.Type}
+		if att.Text != "" {
+			block["text"] = att.Text
+		}
+		if att.MediaType != "" {
+			block["media_type"] = att.MediaType
+		}
+		if att.Data != "" {
+			block["data"] = att.Data
+		}
+		if att.URL != "" {
+			block["url"] = att.URL
+		}
+		if att.Name != "" {
+			block["name"] = att.Name
+		}
+		blocks = append(blocks, block)
+	}
+	return blocks
+}
+
 func toolsToJinja(tools []ToolSchema) []map[string]any {
 	if len(tools) == 0 {
 		return nil
@@ -378,11 +414,12 @@ func buildTemplateMessages(record schema.Record) []templateMessage {
 	msgs := make([]templateMessage, 0, len(record.Turns))
 	for i, turn := range record.Turns {
 		base := templateMessage{
-			Role:      turn.Role,
-			Content:   turn.Text,
-			Reasoning: turn.Reasoning,
-			Timestamp: turn.Timestamp,
-			Index:     len(msgs),
+			Role:        turn.Role,
+			Content:     turn.Text,
+			Reasoning:   turn.Reasoning,
+			Timestamp:   turn.Timestamp,
+			Index:       len(msgs),
+			Attachments: turn.Attachments,
 		}
 		if len(turn.ToolCalls) > 0 && turn.Role == "assistant" {
 			base.ToolCalls = projectToolCalls(turn.ToolCalls, i)
@@ -456,7 +493,20 @@ func toolOutputText(out *schema.ToolOutput) string {
 				b.WriteString(block.Text)
 			}
 		}
-		return b.String()
+		if b.Len() > 0 {
+			return b.String()
+		}
+	}
+	// Several source adapters populate only Raw for non-string tool results
+	// (opencode, gemini). Fall back to JSON so synthetic `tool` messages
+	// retain their payload instead of rendering empty.
+	if out.Raw != nil {
+		if s, ok := out.Raw.(string); ok {
+			return s
+		}
+		if data, err := json.Marshal(out.Raw); err == nil {
+			return string(data)
+		}
 	}
 	return ""
 }
