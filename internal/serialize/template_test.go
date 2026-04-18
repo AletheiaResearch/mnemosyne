@@ -585,6 +585,30 @@ func TestLlama32JsonEmitsImageToken(t *testing.T) {
 	}
 }
 
+func TestAllBuiltinTemplatesLoadAndRender(t *testing.T) {
+	// Every name returned by BuiltinTemplateNames must parse and render a
+	// minimal record. Guards against gonja-incompat syntax (e.g. {% break %},
+	// block-set) silently slipping into the bundled catalog.
+	record := sampleRecord([]schema.Turn{
+		{Role: "user", Text: "hi"},
+		{Role: "assistant", Text: "yo"},
+	})
+	for _, name := range BuiltinTemplateNames() {
+		t.Run(name, func(t *testing.T) {
+			tmpl, err := NewBuiltinTemplate(name, TemplateOptions{
+				BOSToken: "<s>",
+				EOSToken: "</s>",
+			})
+			if err != nil {
+				t.Fatalf("NewBuiltinTemplate(%q): %v", name, err)
+			}
+			if _, err := tmpl.Serialize(record); err != nil {
+				t.Fatalf("Serialize(%q): %v", name, err)
+			}
+		})
+	}
+}
+
 func TestNewFileTemplateDispatchesByExtension(t *testing.T) {
 	dir := t.TempDir()
 	jpath := filepath.Join(dir, "x.jinja")

@@ -17,11 +17,11 @@
     {{- system_message + "\n" }}
 {%- else %}
     {%- set system_message = "You are a helpful assistant. You are developed by Salesforce xLAM team." %}
-    {% set format_instruction %}You have access to a set of tools. When using tools, make calls in a single JSON array: 
-
-[{"name": "tool_call_name", "arguments": {"arg1": "value1", "arg2": "value2"}}, ... (additional parallel tool calls as needed)]
-
-If no tool is suitable, state that explicitly. If the user's input lacks required parameters, ask for clarification. Do not interpret or respond until tool results are returned. Once they are available, process them or make additional calls if needed. For tasks that don't require tools, such as casual conversation or general advice, respond directly in plain text. The available tools are:{% endset %}
+    {#- gonja-compat: gonja does not parse the block-set form
+        ({% set name %}...{% endset %}), so the upstream multi-line
+        instruction is inlined as an expression-set string literal.
+        Content is byte-identical to the upstream block. -#}
+    {%- set format_instruction = "You have access to a set of tools. When using tools, make calls in a single JSON array: \n\n[{\"name\": \"tool_call_name\", \"arguments\": {\"arg1\": \"value1\", \"arg2\": \"value2\"}}, ... (additional parallel tool calls as needed)]\n\nIf no tool is suitable, state that explicitly. If the user's input lacks required parameters, ask for clarification. Do not interpret or respond until tool results are returned. Once they are available, process them or make additional calls if needed. For tasks that don't require tools, such as casual conversation or general advice, respond directly in plain text. The available tools are:" %}
     {{- system_message + "\n" }}
     {%- if tools is not none %}
         {{- format_instruction + "\n\n" }}
