@@ -274,14 +274,18 @@ func newScreen(key screenKey, configPath string) tea.Model {
 				if value := strings.TrimSpace(s.fields[4].Value()); value != "" {
 					args = append(args, "--template-file", value)
 				}
-				if value := s.fields[5].Value(); value != "" {
-					args = append(args, "--bos-token", value)
-				}
-				if value := s.fields[6].Value(); value != "" {
-					args = append(args, "--eos-token", value)
-				}
+				// Token and generation-prompt flags are emitted unconditionally
+				// so clearing a field or toggling the checkbox off in the TUI
+				// actually overrides a persisted Configure default for this
+				// run. The CLI resolver only falls back to persisted config
+				// when the flag wasn't Changed, so gating on non-empty here
+				// would silently ignore the TUI's intent.
+				args = append(args, "--bos-token", s.fields[5].Value())
+				args = append(args, "--eos-token", s.fields[6].Value())
 				if s.fields[7].enabled {
-					args = append(args, "--add-generation-prompt")
+					args = append(args, "--add-generation-prompt=true")
+				} else {
+					args = append(args, "--add-generation-prompt=false")
 				}
 				return args
 			},

@@ -1,6 +1,8 @@
 package serialize
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -582,6 +584,107 @@ func TestLlama32JsonEmitsImageToken(t *testing.T) {
 	}
 	if !strings.Contains(content, "what is this?") {
 		t.Errorf("llama3.2_json should still include the user text:\n%s", content)
+	}
+}
+
+func TestHermesRendersWithInferredToolSchema(t *testing.T) {
+	// InferTools does not populate per-property descriptions; hermes pipes
+	// them through `trim`. Regression guard: an inferred schema (as returned
+	// by InferTools, not the bundled catalog) must still render through
+	// hermes without gonja erroring on the missing description.
+	toolCall := schema.ToolCall{
+		Tool:  "search",
+		Input: map[string]any{"query": "paris"},
+	}
+	record := schema.Record{
+		RecordID: "rec-1",
+		Turns: []schema.Turn{
+			{Role: "user", Text: "lookup paris"},
+			{Role: "assistant", ToolCalls: []schema.ToolCall{toolCall}},
+		},
+	}
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(record); err != nil {
+		t.Fatal(err)
+	}
+	tools, err := InferTools(&buf)
+	if err != nil {
+		t.Fatalf("InferTools: %v", err)
+	}
+	tmpl, err := NewBuiltinTemplate("hermes", TemplateOptions{Tools: tools})
+	if err != nil {
+		t.Fatalf("NewBuiltinTemplate: %v", err)
+	}
+	if _, err := tmpl.Serialize(record); err != nil {
+		t.Fatalf("hermes Serialize with inferred tools: %v", err)
+	}
+}
+
+func TestGoTemplatesSkipSyntheticToolMessages(t *testing.T) {
+	// vicuna enforces strict user/assistant alternation via raiseException.
+	// Synthetic tool-role messages injected for Jinja must not reach Go
+	// text/template rendering, or any tool-using record would abort.
+	record := schema.Record{
+		RecordID: "rec-1",
+		Turns: []schema.Turn{
+			{Role: "user", Text: "weather?"},
+			{Role: "assistant", Text: "one moment", ToolCalls: []schema.ToolCall{{
+				Tool:   "get_weather",
+				Input:  map[string]any{"city": "Paris"},
+				Output: &schema.ToolOutput{Text: "18C"},
+			}}},
+			{Role: "user", Text: "thanks"},
+			{Role: "assistant", Text: "welcome"},
+		},
+	}
+	tmpl, err := NewBuiltinTemplate("vicuna", TemplateOptions{BOSToken: "<s>", EOSToken: "</s>"})
+	if err != nil {
+		t.Fatalf("NewBuiltinTemplate: %v", err)
+	}
+	out, err := tmpl.Serialize(record)
+	if err != nil {
+		t.Fatalf("vicuna rejected tool-using trace: %v", err)
+	}
+	content := out.(struct {
+		ID      string `json:"id"`
+		Model   string `json:"model"`
+		Content string `json:"content"`
+	}).Content
+	if strings.Contains(content, "TOOL:") || strings.Contains(content, "[tool]") {
+		t.Errorf("synthetic tool role leaked into go-text render: %q", content)
+	}
+}
+
+func TestLlama4JsonEmitsImageToken(t *testing.T) {
+	// Upstream bug: render_message called is_array_of_type_objects(data) on
+	// an undefined `data`, so multimodal turns fell through to tojson and
+	// the <|image|> marker never emitted.
+	tmpl, err := NewBuiltinTemplate("llama4_json", TemplateOptions{BOSToken: "<|begin_of_text|>"})
+	if err != nil {
+		t.Fatalf("NewBuiltinTemplate: %v", err)
+	}
+	record := schema.Record{
+		RecordID: "rec-img",
+		Turns: []schema.Turn{
+			{Role: "user", Text: "what is this?", Attachments: []schema.ContentBlock{
+				{Type: "image", URL: "https://example.com/x.png"},
+			}},
+		},
+	}
+	out, err := tmpl.Serialize(record)
+	if err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+	content := out.(struct {
+		ID      string `json:"id"`
+		Model   string `json:"model"`
+		Content string `json:"content"`
+	}).Content
+	if !strings.Contains(content, "<|image|>") {
+		t.Errorf("llama4_json should emit <|image|> for image attachments:\n%s", content)
+	}
+	if !strings.Contains(content, "what is this?") {
+		t.Errorf("llama4_json should still include user text:\n%s", content)
 	}
 }
 

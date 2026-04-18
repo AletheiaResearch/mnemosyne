@@ -260,7 +260,7 @@ func (t *Template) Serialize(record schema.Record) (any, error) {
 
 func (t *Template) serializeGo(record schema.Record, messages []templateMessage) (any, error) {
 	ctx := templateContext{
-		Messages:            messages,
+		Messages:            stripToolMessages(messages),
 		BOSToken:            t.options.BOSToken,
 		EOSToken:            t.options.EOSToken,
 		AddGenerationPrompt: t.options.AddGenerationPrompt,
@@ -408,6 +408,29 @@ func toolsToJinja(tools []ToolSchema) []map[string]any {
 		})
 	}
 	return out
+}
+
+// stripToolMessages drops synthetic `tool`-role messages for Go text/template
+// rendering. The bundled Go templates (chatml, zephyr, vicuna) are string-only
+// and have no structured tool vocabulary; vicuna in particular enforces strict
+// user/assistant alternation, so letting a synthetic tool message through
+// aborts with raiseException on any tool-using trace.
+func stripToolMessages(msgs []templateMessage) []templateMessage {
+	kept := msgs[:0:0]
+	for _, m := range msgs {
+		if m.Role == "tool" {
+			continue
+		}
+		kept = append(kept, m)
+	}
+	for i := range kept {
+		kept[i].Index = i
+		kept[i].IsLast = false
+	}
+	if len(kept) > 0 {
+		kept[len(kept)-1].IsLast = true
+	}
+	return kept
 }
 
 func buildTemplateMessages(record schema.Record) []templateMessage {

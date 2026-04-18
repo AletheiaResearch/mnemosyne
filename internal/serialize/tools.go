@@ -91,7 +91,13 @@ func InferTools(r io.Reader) ([]ToolSchema, error) {
 		sort.Strings(paramNames)
 		for _, pname := range paramNames {
 			p := entry.params[pname]
-			properties[pname] = map[string]any{"type": p.typeName}
+			// Always populate `description` (empty when unknown) so templates
+			// that trim / format it — e.g. hermes' `param_fields.description
+			// | trim` — don't explode on inferred-only schemas.
+			properties[pname] = map[string]any{
+				"type":        p.typeName,
+				"description": "",
+			}
 			if p.seen == entry.calls {
 				required = append(required, pname)
 			}

@@ -15,10 +15,15 @@
     {%- endif -%}
 {%- endmacro %}
 
+{#- upstream-fix: the released template passes an undefined `data` into
+    is_array_of_type_objects, so the image/text dispatch never fires and
+    multimodal turns fall through to tojson. The check is inlined against
+    the actual message['content'] and the type-array branch now runs as
+    intended. -#}
 {%- macro render_message(message) %}
     {%- if message['content'] is string %}
         {{- message['content']|trim }}
-    {%- elif is_array_of_type_objects(data) == 'True' %}
+    {%- elif message['content'] is iterable %}
         {%- for content in message['content'] %}
             {%- if content['type'] == 'image' %}
                 {{- '<|image|>' }}
