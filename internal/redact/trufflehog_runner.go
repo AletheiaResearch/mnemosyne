@@ -64,20 +64,41 @@ func (r *trufflehogRunner) Redact(input string, stats *ApplyStats) (string, int)
 				continue
 			}
 			for _, result := range results {
-				raw := string(result.Raw)
-				if raw == "" {
+				raw, rawV2 := string(result.Raw), string(result.RawV2)
+				// RawV2 carries the full multipart credential ("id:secret")
+				// when the detector emits one; Raw only holds the identifier
+				// half. Prefer RawV2 for dedup/fingerprints so two AWS keys
+				// that share an access-key ID aren't collapsed into one
+				// verified entry.
+				key := raw
+				if rawV2 != "" {
+					key = rawV2
+				}
+				if key == "" {
 					continue
 				}
 				if result.Verified && stats != nil {
-					stats.recordVerified(raw, findingLabel(result))
+					stats.recordVerified(key, findingLabel(result))
 				}
-				if _, dup := seen[raw]; dup {
+				if _, dup := seen[key]; dup {
 					continue
 				}
-				seen[raw] = struct{}{}
-				replaced, n := stringsReplaceAll(out, raw, PlaceholderMarker)
-				out = replaced
-				count += n
+				seen[key] = struct{}{}
+				// Strip the combined form first so the full "id:secret"
+				// substring is redacted when it appears contiguously, then
+				// fall through to the bare identifier so the ID is still
+				// scrubbed when the two halves are split across lines
+				// (e.g. a .env file with ID and secret on separate keys).
+				if rawV2 != "" {
+					replaced, n := stringsReplaceAll(out, rawV2, PlaceholderMarker)
+					out = replaced
+					count += n
+				}
+				if raw != "" && raw != rawV2 {
+					replaced, n := stringsReplaceAll(out, raw, PlaceholderMarker)
+					out = replaced
+					count += n
+				}
 			}
 		}
 	}
@@ -109,11 +130,18 @@ func (r *trufflehogRunner) Scan(input string, findings *Findings) {
 				continue
 			}
 			for _, result := range results {
-				raw := string(result.Raw)
-				if raw == "" {
+				raw, rawV2 := string(result.Raw), string(result.RawV2)
+				// Prefer RawV2 so multipart credentials (e.g. AWS
+				// "id:secret") aren't collapsed by the identifier half;
+				// see Redact for the symmetric treatment.
+				key := raw
+				if rawV2 != "" {
+					key = rawV2
+				}
+				if key == "" {
 					continue
 				}
-				if findings.markToken(raw) {
+				if findings.markToken(key) {
 					findings.TokenCount++
 					if len(findings.Tokens) < 20 {
 						findings.Tokens = append(findings.Tokens, findingLabel(result))
@@ -122,10 +150,10 @@ func (r *trufflehogRunner) Scan(input string, findings *Findings) {
 				if !result.Verified {
 					continue
 				}
-				if _, dup := seenVerified[raw]; dup {
+				if _, dup := seenVerified[key]; dup {
 					continue
 				}
-				seenVerified[raw] = struct{}{}
+				seenVerified[key] = struct{}{}
 				findings.VerifiedSecretCount++
 				if len(findings.VerifiedSecrets) < 20 {
 					findings.VerifiedSecrets = append(findings.VerifiedSecrets, findingLabel(result))

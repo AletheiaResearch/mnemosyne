@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	thdet "github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/detector_typepb"
 
 	"github.com/AletheiaResearch/mnemosyne/internal/redact/detectors/posthog"
 	"github.com/AletheiaResearch/mnemosyne/internal/schema"
@@ -482,4 +484,146 @@ func containsWith(items []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// multipartDetector is a minimal stand-in for a trufflehog detector
+// that emits multipart credentials (e.g. AWS "id:secret"): Raw is the
+// identifier, RawV2 is the full token. It returns one Result per entry
+// in `emit`, using the configured verified flag.
+type multipartDetector struct {
+	keyword  string
+	emit     []multipartResult
+	verified bool
+}
+
+type multipartResult struct {
+	raw   string
+	rawV2 string
+}
+
+func (d *multipartDetector) Keywords() []string { return []string{d.keyword} }
+func (d *multipartDetector) Type() detector_typepb.DetectorType {
+	return detector_typepb.DetectorType_CustomRegex
+}
+func (d *multipartDetector) Description() string { return "multipart test detector" }
+func (d *multipartDetector) FromData(_ context.Context, _ bool, _ []byte) ([]thdet.Result, error) {
+	out := make([]thdet.Result, 0, len(d.emit))
+	for _, e := range d.emit {
+		out = append(out, thdet.Result{
+			DetectorType: detector_typepb.DetectorType_CustomRegex,
+			DetectorName: "MultipartTest",
+			Raw:          []byte(e.raw),
+			RawV2:        []byte(e.rawV2),
+			Redacted:     "multipart****",
+			Verified:     d.verified,
+		})
+	}
+	return out, nil
+}
+
+// TestTrufflehogRunnerRedactsMultipartSecretFully guards the reviewer's
+// AWS scenario: when a detector emits RawV2 with the full "id:secret"
+// token, the combined string must be stripped — not just the Raw
+// identifier half that would otherwise leave the secret material in the
+// output.
+func TestTrufflehogRunnerRedactsMultipartSecretFully(t *testing.T) {
+	t.Parallel()
+
+	const (
+		id     = "ABIAS9L8MS5IPHTZPPUQ"
+		secret = "v2QPKHl7LcdVYsjaR4LgQiZ1zw3MAnMyiondXC63"
+	)
+	det := &multipartDetector{
+		keyword: "ABIA",
+		emit: []multipartResult{
+			{raw: id, rawV2: id + ":" + secret},
+		},
+	}
+	pipeline, err := New(Options{Detectors: []thdet.Detector{det}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	input := "cred=" + id + ":" + secret
+	out := pipeline.applyText(input, &ApplyStats{})
+	if strings.Contains(out, secret) {
+		t.Fatalf("secret half leaked after redaction: %q", out)
+	}
+	if strings.Contains(out, id) {
+		t.Fatalf("identifier half leaked after redaction: %q", out)
+	}
+	if !strings.Contains(out, PlaceholderMarker) {
+		t.Fatalf("expected placeholder marker in output, got %q", out)
+	}
+}
+
+// TestTrufflehogRunnerRedactsMultipartSecretSplitAcrossLines covers the
+// .env-style case where the identifier and secret appear on separate
+// lines, so the combined RawV2 substring isn't present — the runner
+// must fall back to stripping Raw alone.
+func TestTrufflehogRunnerRedactsMultipartSecretSplitAcrossLines(t *testing.T) {
+	t.Parallel()
+
+	const (
+		id     = "ABIAS9L8MS5IPHTZPPUQ"
+		secret = "v2QPKHl7LcdVYsjaR4LgQiZ1zw3MAnMyiondXC63"
+	)
+	det := &multipartDetector{
+		keyword: "ABIA",
+		emit: []multipartResult{
+			{raw: id, rawV2: id + ":" + secret},
+		},
+	}
+	pipeline, err := New(Options{Detectors: []thdet.Detector{det}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	input := "AWS_ACCESS_KEY_ID=" + id + "\nAWS_SECRET_ACCESS_KEY=" + secret
+	out := pipeline.applyText(input, &ApplyStats{})
+	if strings.Contains(out, id) {
+		t.Fatalf("identifier still present when RawV2 isn't contiguous: %q", out)
+	}
+	if !strings.Contains(out, PlaceholderMarker) {
+		t.Fatalf("expected placeholder marker, got %q", out)
+	}
+}
+
+// TestTrufflehogRunnerMultipartDedupUsesRawV2 asserts that two verified
+// multipart credentials sharing a Raw identifier but differing in RawV2
+// are counted and fingerprinted as distinct — the old Raw-only dedup
+// would have collapsed them into one.
+func TestTrufflehogRunnerMultipartDedupUsesRawV2(t *testing.T) {
+	t.Parallel()
+
+	const (
+		id      = "ABIAS9L8MS5IPHTZPPUQ"
+		secretA = "v2QPKHl7LcdVYsjaR4LgQiZ1zw3MAnMyiondXC63"
+		secretB = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	)
+	det := &multipartDetector{
+		keyword:  "ABIA",
+		verified: true,
+		emit: []multipartResult{
+			{raw: id, rawV2: id + ":" + secretA},
+			{raw: id, rawV2: id + ":" + secretB},
+		},
+	}
+	pipeline, err := New(Options{Detectors: []thdet.Detector{det}, VerifySecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	record := schema.Record{
+		Turns: []schema.Turn{{Text: "a=" + id + ":" + secretA + " b=" + id + ":" + secretB}},
+	}
+	_, stats := pipeline.ApplyRecord(record)
+	if stats.VerifiedSecretCount != 2 {
+		t.Fatalf("expected 2 distinct verified multipart secrets, got %d (%v)",
+			stats.VerifiedSecretCount, stats.VerifiedLabels())
+	}
+	if stats.VerifiedSecrets[0].Fingerprint == stats.VerifiedSecrets[1].Fingerprint {
+		t.Fatalf("distinct multipart secrets must yield distinct fingerprints, got %q twice",
+			stats.VerifiedSecrets[0].Fingerprint)
+	}
 }
