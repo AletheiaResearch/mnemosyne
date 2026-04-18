@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -38,6 +39,12 @@ func newTransformCommand(rt *runtime) *cobra.Command {
 				return err
 			}
 			defer in.Close()
+
+			if dir := filepath.Dir(output); dir != "" && dir != "." {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					return err
+				}
+			}
 
 			out, err := os.Create(output)
 			if err != nil {
