@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -44,6 +45,14 @@ var DefaultProjectAPIBaseURLs = []string{
 	"https://us.i.posthog.com",
 	"https://eu.i.posthog.com",
 }
+
+// SelfHostedEndpointEnv is the env var PostHog's own SDKs honour for
+// pointing at a self-hosted instance. When set, both verifiers route
+// exclusively to that host — self-hosted deployments serve both the
+// app and ingestion paths from the same origin, and we deliberately
+// skip the cloud fallbacks so a self-hosted key is never sent to
+// PostHog Cloud.
+const SelfHostedEndpointEnv = "POSTHOG_ENDPOINT"
 
 // defaultHTTPClient is built lazily so the regex-only path pays no
 // startup cost. It forbids local addresses (mirroring upstream
@@ -167,6 +176,10 @@ func NewProjectAPIKeyScanner(opts ...Option) *Scanner {
 }
 
 func buildScanner(name, prefix, description string, version int, verify verifyFunc, defaultBaseURLs []string, opts []Option) *Scanner {
+	base := defaultBaseURLs
+	if endpoint := strings.TrimSpace(os.Getenv(SelfHostedEndpointEnv)); endpoint != "" {
+		base = []string{endpoint}
+	}
 	s := &Scanner{
 		name:        name,
 		prefix:      prefix,
@@ -174,7 +187,7 @@ func buildScanner(name, prefix, description string, version int, verify verifyFu
 		version:     version,
 		regex:       keyRegex(prefix),
 		verify:      verify,
-		baseURLs:    append([]string(nil), defaultBaseURLs...),
+		baseURLs:    append([]string(nil), base...),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -273,7 +286,10 @@ func verifyPersonalAPIKey(ctx context.Context, s *Scanner, key string, result *t
 			result.Verified = true
 			return
 		case http.StatusUnauthorized:
-			lastErr = nil
+			// 401 from this host is an authoritative "not me"; leave any
+			// prior transport error intact so a run that succeeded on one
+			// region only because another was unreachable still surfaces
+			// as verification-failed rather than verification-complete.
 		default:
 			lastErr = fmt.Errorf("posthog %s: unexpected status %d", base, res.StatusCode)
 		}
@@ -314,7 +330,9 @@ func verifyProjectAPIKey(ctx context.Context, s *Scanner, key string, result *th
 			}
 			lastErr = errors.New("posthog flags returned 200 with non-JSON body")
 		case http.StatusUnauthorized:
-			lastErr = nil
+			// See verifyPersonalAPIKey: keep any prior transport error so
+			// an inconclusive-across-regions run doesn't read as a clean
+			// "not verified" just because the fallback host answered 401.
 		default:
 			lastErr = fmt.Errorf("posthog %s: unexpected status %d", base, res.StatusCode)
 		}

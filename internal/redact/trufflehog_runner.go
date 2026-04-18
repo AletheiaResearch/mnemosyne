@@ -131,17 +131,20 @@ func (r *trufflehogRunner) Scan(input string, findings *Findings) {
 			}
 			for _, result := range results {
 				raw, rawV2 := string(result.Raw), string(result.RawV2)
-				// Prefer RawV2 so multipart credentials (e.g. AWS
-				// "id:secret") aren't collapsed by the identifier half;
-				// see Redact for the symmetric treatment.
-				key := raw
-				if rawV2 != "" {
-					key = rawV2
+				// Token dedup uses Raw so a credential caught by both the
+				// regex pass (which stores the secret half it matched) and
+				// this trufflehog run gets counted once. Keying on RawV2
+				// here would miss the cross-detector overlap and
+				// double-count any multipart secret (e.g. an Algolia
+				// app-id/API-key pair flagged by both passes).
+				tokenKey := raw
+				if tokenKey == "" {
+					tokenKey = rawV2
 				}
-				if key == "" {
+				if tokenKey == "" {
 					continue
 				}
-				if findings.markToken(key) {
+				if findings.markToken(tokenKey) {
 					findings.TokenCount++
 					if len(findings.Tokens) < 20 {
 						findings.Tokens = append(findings.Tokens, findingLabel(result))
@@ -150,10 +153,18 @@ func (r *trufflehogRunner) Scan(input string, findings *Findings) {
 				if !result.Verified {
 					continue
 				}
-				if _, dup := seenVerified[key]; dup {
+				// Verified-secret dedup prefers RawV2 so two distinct
+				// multipart credentials that share an identifier half
+				// aren't collapsed into one verified entry (the symmetric
+				// treatment Redact applies).
+				verifiedKey := rawV2
+				if verifiedKey == "" {
+					verifiedKey = raw
+				}
+				if _, dup := seenVerified[verifiedKey]; dup {
 					continue
 				}
-				seenVerified[key] = struct{}{}
+				seenVerified[verifiedKey] = struct{}{}
 				findings.VerifiedSecretCount++
 				if len(findings.VerifiedSecrets) < 20 {
 					findings.VerifiedSecrets = append(findings.VerifiedSecrets, findingLabel(result))

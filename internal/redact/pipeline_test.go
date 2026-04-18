@@ -589,6 +589,39 @@ func TestTrufflehogRunnerRedactsMultipartSecretSplitAcrossLines(t *testing.T) {
 	}
 }
 
+// TestScanRecordDedupsMultipartAcrossRegexAndTrufflehog guards the
+// cross-detector TokenCount dedup for multipart credentials: an Algolia
+// app-id + API-key pair caught by both the regex pass (on the api_key=
+// assignment) and the multipart trufflehog detector (emitting
+// Raw=api_key, RawV2=id:api_key) must still produce TokenCount=1.
+// Keying dedup on RawV2 would miss the overlap and double-count.
+func TestScanRecordDedupsMultipartAcrossRegexAndTrufflehog(t *testing.T) {
+	t.Parallel()
+
+	const (
+		appID  = "AA11BB22CC"
+		apiKey = "0123456789abcdef0123456789abcdef"
+	)
+	det := &multipartDetector{
+		keyword: "AA11",
+		emit: []multipartResult{
+			{raw: apiKey, rawV2: appID + ":" + apiKey},
+		},
+	}
+	pipeline, err := New(Options{Detectors: []thdet.Detector{det}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	findings := pipeline.ScanRecord(schema.Record{
+		Turns: []schema.Turn{{Text: "api_key=" + apiKey + " app_id=" + appID}},
+	})
+	if findings.TokenCount != 1 {
+		t.Fatalf("expected TokenCount=1 for a single multipart credential flagged by both passes, got %d (tokens=%v)",
+			findings.TokenCount, findings.Tokens)
+	}
+}
+
 // TestTrufflehogRunnerMultipartDedupUsesRawV2 asserts that two verified
 // multipart credentials sharing a Raw identifier but differing in RawV2
 // are counted and fingerprinted as distinct — the old Raw-only dedup

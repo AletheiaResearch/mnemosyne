@@ -196,9 +196,21 @@ func (p *Pipeline) ScanRecord(record schema.Record) Findings {
 		builder.WriteRune('\n')
 	}
 	findings := Findings{}
-	p.detector.ScanInto(builder.String(), &findings)
-	p.trufflehog.Scan(builder.String(), &findings)
+	p.ScanText(builder.String(), &findings)
 	return findings
+}
+
+// ScanText merges hits from input into findings using the full detector
+// set (regex + trufflehog). Callers that scan line-by-line — e.g. the
+// attestation safety scan — use this to catch provider-prefixed secrets
+// the regex pass alone wouldn't recognise, while scoping dedup to their
+// own findings accumulator.
+func (p *Pipeline) ScanText(input string, findings *Findings) {
+	if p == nil || findings == nil {
+		return
+	}
+	p.detector.ScanInto(input, findings)
+	p.trufflehog.Scan(input, findings)
 }
 
 func (p *Pipeline) applyTurn(turn schema.Turn, stats *ApplyStats) schema.Turn {

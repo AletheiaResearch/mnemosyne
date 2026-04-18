@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // Fixtures are assembled at runtime so the full provider-prefixed
@@ -249,6 +250,101 @@ func TestWithBaseURLsIgnoresEmpty(t *testing.T) {
 	scanner := NewPersonalAPIKeyScanner(WithBaseURLs(nil))
 	if len(scanner.baseURLs) == 0 {
 		t.Fatalf("expected default base URLs to be preserved when override is empty")
+	}
+}
+
+// TestSelfHostedEndpointOverridesDefaults asserts that POSTHOG_ENDPOINT
+// routes both the personal-key and project-key verifiers to a single
+// self-hosted origin, bypassing the cloud fallbacks so a self-hosted
+// key is never leaked to PostHog Cloud for verification.
+func TestSelfHostedEndpointOverridesDefaults(t *testing.T) {
+	t.Setenv(SelfHostedEndpointEnv, "http://localhost:8000")
+
+	personal := NewPersonalAPIKeyScanner()
+	project := NewProjectAPIKeyScanner()
+	feature := NewFeatureFlagSecureKeyScanner()
+
+	for _, s := range []*Scanner{personal, project, feature} {
+		if !equalStrings(s.baseURLs, []string{"http://localhost:8000"}) {
+			t.Fatalf("%s: expected self-hosted endpoint to replace defaults, got %v",
+				s.Name(), s.baseURLs)
+		}
+	}
+}
+
+// TestSelfHostedEndpointVerifiesProjectKey end-to-ends the self-hosted
+// path: with POSTHOG_ENDPOINT set and no WithBaseURLs override, the
+// project scanner must hit /flags/?v=2 on the env-supplied host and
+// flag the key as verified.
+func TestSelfHostedEndpointVerifiesProjectKey(t *testing.T) {
+	good := fakeKey(phcPrefix, projectBody)
+
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/flags/" {
+			http.NotFound(w, r)
+			return
+		}
+		hits.Add(1)
+		body, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(body), good) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"featureFlags":{}}`)
+	}))
+	defer srv.Close()
+
+	t.Setenv(SelfHostedEndpointEnv, srv.URL)
+
+	scanner := NewProjectAPIKeyScanner(WithHTTPClient(http.DefaultClient))
+	results, err := scanner.FromData(context.Background(), true, []byte(good))
+	if err != nil {
+		t.Fatalf("FromData: %v", err)
+	}
+	if len(results) != 1 || !results[0].Verified {
+		t.Fatalf("expected verified=true via self-hosted endpoint, got %+v", results)
+	}
+	if hits.Load() == 0 {
+		t.Fatalf("expected self-hosted server to be queried")
+	}
+}
+
+// TestPersonalAPIKeyPreservesTransportErrorAcrossRegions guards the
+// region-fallback semantics: a transport error on the first host
+// followed by 401 on the second must surface as a verification error,
+// not a clean "not verified" — otherwise an unreachable region silently
+// downgrades a potentially-valid key to unverified.
+func TestPersonalAPIKeyPreservesTransportErrorAcrossRegions(t *testing.T) {
+	t.Parallel()
+
+	key := fakeKey(phxPrefix, personalBody)
+	reachable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer reachable.Close()
+
+	scanner := NewPersonalAPIKeyScanner(
+		// First host intentionally unreachable (port 1 is the TCPMUX
+		// service, which should refuse or never respond).
+		WithBaseURLs([]string{"http://127.0.0.1:1", reachable.URL}),
+		WithHTTPClient(&http.Client{Timeout: 500 * time.Millisecond}),
+	)
+
+	results, err := scanner.FromData(context.Background(), true, []byte(key))
+	if err != nil {
+		t.Fatalf("FromData: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Verified {
+		t.Fatalf("unreachable first region + 401 must not mark key verified")
+	}
+	if results[0].VerificationError() == nil {
+		t.Fatalf("expected verification error to be preserved from the unreachable region")
 	}
 }
 
