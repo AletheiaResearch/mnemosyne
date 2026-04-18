@@ -3,6 +3,8 @@ package cli
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -383,9 +385,9 @@ func (a *runExtractionArgs) recordIsolate(ctx context.Context, origin, src strin
 	a.isolateSeenSrc[src] = struct{}{}
 	a.isolateMu.Unlock()
 
-	fileBase := filepath.Base(src)
+	relPath := isolateRelPath(src)
 	format := redactor.Format()
-	dst := filepath.Join(a.stagingDir, format, fileBase)
+	dst := filepath.Join(a.stagingDir, format, relPath)
 	result, err := redactor.Redact(ctx, src, dst, nativeexport.Options{
 		Pipeline:     a.pipeline,
 		AttachImages: a.attachImages,
@@ -396,7 +398,7 @@ func (a *runExtractionArgs) recordIsolate(ctx context.Context, origin, src strin
 		return nil
 	}
 	session := config.IsolateSession{
-		File:         format + "/" + fileBase,
+		File:         format + "/" + filepath.ToSlash(relPath),
 		Format:       format,
 		SourcePath:   src,
 		StagingPath:  result.StagingPath,
@@ -410,6 +412,18 @@ func (a *runExtractionArgs) recordIsolate(ctx context.Context, origin, src strin
 	*a.isolateSessions = append(*a.isolateSessions, session)
 	a.isolateMu.Unlock()
 	return nil
+}
+
+// isolateRelPath builds a staging-relative path that preserves the
+// source's basename (so the HF Agent Trace Viewer still shows a useful
+// filename) while disambiguating sources that share a basename across
+// different parent directories. A short hash of the parent directory
+// becomes a subdirectory, so two projects' "session.jsonl" do not
+// overwrite each other's staging file or collide in the manifest.
+func isolateRelPath(src string) string {
+	sum := sha256.Sum256([]byte(filepath.Dir(src)))
+	prefix := hex.EncodeToString(sum[:4])
+	return filepath.Join(prefix, filepath.Base(src))
 }
 
 type emitted struct {

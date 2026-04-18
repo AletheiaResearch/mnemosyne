@@ -79,8 +79,9 @@ func TestExtractIsolate_ProducesStagingFilesAndPreservesSource(t *testing.T) {
 			hex.EncodeToString(srcHashBefore[:]), hex.EncodeToString(srcHashAfter[:]))
 	}
 
-	// Staging file must exist and be redacted.
-	stagingPath := filepath.Join(filepath.Dir(outPath), "isolate", "claudecode", "session.jsonl")
+	// Staging file must exist and be redacted. The path is namespaced by
+	// a hash prefix of the source's parent directory, so discover it.
+	stagingPath := findSingleStagingFile(t, filepath.Join(filepath.Dir(outPath), "isolate", "claudecode"), "session.jsonl")
 	stagingData, err := os.ReadFile(stagingPath)
 	if err != nil {
 		t.Fatalf("read staging: %v", err)
@@ -108,8 +109,8 @@ func TestExtractIsolate_ProducesStagingFilesAndPreservesSource(t *testing.T) {
 		t.Fatalf("isolate sessions = %d, want 1", len(cfg.LastExtract.IsolateSessions))
 	}
 	session := cfg.LastExtract.IsolateSessions[0]
-	if session.File != "claudecode/session.jsonl" {
-		t.Errorf("session.File = %q", session.File)
+	if !strings.HasPrefix(session.File, "claudecode/") || !strings.HasSuffix(session.File, "/session.jsonl") {
+		t.Errorf("session.File = %q, want claudecode/<prefix>/session.jsonl", session.File)
 	}
 	if session.Format != "claudecode" {
 		t.Errorf("session.Format = %q", session.Format)
@@ -176,16 +177,9 @@ func TestExtractIsolate_SkipsSubagentDirectoryProvenance(t *testing.T) {
 	// Only the primary session should produce a staging file; the
 	// subagent directory must be skipped cleanly.
 	stagingRoot := filepath.Join(filepath.Dir(outPath), "isolate", "claudecode")
-	entries, err := os.ReadDir(stagingRoot)
-	if err != nil {
-		t.Fatalf("read staging: %v", err)
-	}
-	names := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		names = append(names, entry.Name())
-	}
-	if len(names) != 1 || names[0] != sessionID+".jsonl" {
-		t.Errorf("staging entries = %v, want [%s.jsonl]", names, sessionID)
+	jsonlFiles := collectJSONLFiles(t, stagingRoot)
+	if len(jsonlFiles) != 1 || filepath.Base(jsonlFiles[0]) != sessionID+".jsonl" {
+		t.Errorf("staging files = %v, want one %s.jsonl", jsonlFiles, sessionID)
 	}
 
 	cfg, err := config.Load(cfgPath)
@@ -207,4 +201,105 @@ func TestExtractIsolate_SkipsSubagentDirectoryProvenance(t *testing.T) {
 	if !strings.Contains(string(canonical), ":subagents") {
 		t.Errorf("canonical record for subagent tree missing; got:\n%s", canonical)
 	}
+}
+
+// Two Claude Code projects that happen to contain a session file with
+// the same basename must not collide in the staging directory or in the
+// manifest — otherwise the second source silently overwrites the first
+// and the stored redacted_hash stops describing the bytes on disk.
+func TestExtractIsolate_DisambiguatesSameBasenameAcrossProjects(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	projA := filepath.Join(home, ".claude", "projects", "projA")
+	projB := filepath.Join(home, ".claude", "projects", "projB")
+	for _, dir := range []string{projA, projB} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "session.jsonl"), []byte(extractIsolateClaudecode), 0o644); err != nil {
+			t.Fatalf("write %s: %v", dir, err)
+		}
+	}
+
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	outPath := filepath.Join(t.TempDir(), "canonical.jsonl")
+	rt := &runtime{
+		configPath: cfgPath,
+		logger:     newLogger(false),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+	}
+	if out, err := runExtract(t, rt,
+		"--scope", "claudecode",
+		"--include-all",
+		"--output", outPath,
+		"--isolate",
+	); err != nil {
+		t.Fatalf("extract: %v\n%s", err, out)
+	}
+
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.LastExtract == nil {
+		t.Fatalf("LastExtract is nil")
+	}
+	if len(cfg.LastExtract.IsolateSessions) != 2 {
+		t.Fatalf("isolate sessions = %d, want 2", len(cfg.LastExtract.IsolateSessions))
+	}
+
+	seenFile := make(map[string]struct{}, 2)
+	seenStaging := make(map[string]struct{}, 2)
+	for _, s := range cfg.LastExtract.IsolateSessions {
+		if !strings.HasPrefix(s.File, "claudecode/") || !strings.HasSuffix(s.File, "/session.jsonl") {
+			t.Errorf("session.File = %q, want claudecode/<prefix>/session.jsonl", s.File)
+		}
+		if _, dup := seenFile[s.File]; dup {
+			t.Errorf("duplicate session.File across distinct sources: %q", s.File)
+		}
+		seenFile[s.File] = struct{}{}
+		if _, dup := seenStaging[s.StagingPath]; dup {
+			t.Errorf("two sources share a staging path: %q", s.StagingPath)
+		}
+		seenStaging[s.StagingPath] = struct{}{}
+		if _, err := os.Stat(s.StagingPath); err != nil {
+			t.Errorf("staging file %q missing: %v", s.StagingPath, err)
+		}
+	}
+}
+
+// findSingleStagingFile returns the staging file under root whose
+// basename matches name. It fails the test if there is not exactly one.
+func findSingleStagingFile(t *testing.T, root, name string) string {
+	t.Helper()
+	files := collectJSONLFiles(t, root)
+	matches := make([]string, 0, 1)
+	for _, f := range files {
+		if filepath.Base(f) == name {
+			matches = append(matches, f)
+		}
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected exactly one %s under %s, got %v", name, root, matches)
+	}
+	return matches[0]
+}
+
+func collectJSONLFiles(t *testing.T, root string) []string {
+	t.Helper()
+	var out []string
+	if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && filepath.Ext(path) == ".jsonl" {
+			out = append(out, path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+	return out
 }
