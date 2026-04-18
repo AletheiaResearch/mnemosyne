@@ -68,19 +68,15 @@ func newPublishCommand(rt *runtime) *cobra.Command {
 			}
 
 			// Validate all local preconditions before any remote side
-			// effect. EnsureDatasetRepo creates the dataset repo, so a
-			// failure afterwards would leave an empty repo behind.
+			// effect. Each branch defers EnsureDatasetRepo until the
+			// last possible moment (just before the first upload) so
+			// that a later local failure — SummarizeFile, MkdirTemp,
+			// fetchRemoteManifest — cannot leave an empty dataset on
+			// the hub.
 			if isolate {
 				if err := validateIsolatePreflight(cfg); err != nil {
 					return err
 				}
-			}
-
-			if err := publish.EnsureDatasetRepo(repoID); err != nil {
-				return err
-			}
-
-			if isolate {
 				return runIsolatePublish(cmd, rt, cfg, repoID, publishAttestation)
 			}
 
@@ -94,6 +90,9 @@ func newPublishCommand(rt *runtime) *cobra.Command {
 }
 
 func runCanonicalPublish(cmd *cobra.Command, rt *runtime, cfg config.Config, repoID, publishAttestation string) error {
+	// Run all local prep up front so a failure here leaves the hub
+	// untouched. EnsureDatasetRepo is the first remote side effect and
+	// stays below this block.
 	summary, err := card.SummarizeFile(cfg.LastAttest.FilePath)
 	if err != nil {
 		return err
@@ -120,6 +119,10 @@ func runCanonicalPublish(cmd *cobra.Command, rt *runtime, cfg config.Config, rep
 		return err
 	}
 	if err := os.WriteFile(readmePath, []byte(description), 0o644); err != nil {
+		return err
+	}
+
+	if err := publish.EnsureDatasetRepo(repoID); err != nil {
 		return err
 	}
 
@@ -202,6 +205,12 @@ func runIsolatePublish(cmd *cobra.Command, rt *runtime, cfg config.Config, repoI
 		})
 	}
 
+	// Run all local prep up front — temp dir, remote-manifest fetch,
+	// diff/merge, manifest + README rendering, temp-file writes. Any
+	// failure here must fail the command without creating the dataset
+	// repo. DownloadFile already maps "repository not found" to (false,
+	// nil), so fetchRemoteManifest is safe to call before the repo
+	// exists; it returns the same empty-remote state as a first publish.
 	tempDir, err := os.MkdirTemp("", "mnemosyne-publish-*")
 	if err != nil {
 		return err
@@ -215,25 +224,6 @@ func runIsolatePublish(cmd *cobra.Command, rt *runtime, cfg config.Config, repoI
 
 	toUpload, _, alignedEntries := card.DiffManifestSessions(localEntries, remoteEntries)
 	mergedEntries := card.MergeManifestEntries(alignedEntries, remoteEntries)
-
-	commitMessage := "Publish Mnemosyne isolate export " + time.Now().UTC().Format(time.RFC3339)
-	// Aligned entries may carry a File adopted from the remote manifest
-	// (when the bytes are unchanged but the source moved on disk), so
-	// key the staging-path lookup by SourceHash — the one field Diff
-	// never rewrites — to pair uploads with the correct local bytes.
-	uploadBySourceHash := make(map[string]config.IsolateSession, len(cfg.LastExtract.IsolateSessions))
-	for _, session := range cfg.LastExtract.IsolateSessions {
-		uploadBySourceHash[session.SourceHash] = session
-	}
-	for _, entry := range toUpload {
-		session, ok := uploadBySourceHash[entry.SourceHash]
-		if !ok {
-			return fmt.Errorf("isolate session missing staging path for %s", entry.File)
-		}
-		if err := publish.UploadFile(repoID, session.StagingPath, entry.File, commitMessage); err != nil {
-			return err
-		}
-	}
 
 	header := card.ManifestHeader{
 		Tool:                "mnemosyne/" + version.Version,
@@ -259,13 +249,39 @@ func runIsolatePublish(cmd *cobra.Command, rt *runtime, cfg config.Config, repoI
 	if err := os.WriteFile(manifestPath, manifestBytes, 0o644); err != nil {
 		return err
 	}
-	if err := publish.UploadFile(repoID, manifestPath, card.ManifestFileName, commitMessage); err != nil {
-		return err
-	}
 
 	readme := card.RenderIsolateDescription(header, mergedEntries, "")
 	readmePath := filepath.Join(tempDir, "README.md")
 	if err := os.WriteFile(readmePath, []byte(readme), 0o644); err != nil {
+		return err
+	}
+
+	// Aligned entries may carry a File adopted from the remote manifest
+	// (when the bytes are unchanged but the source moved on disk), so
+	// key the staging-path lookup by SourceHash — the one field Diff
+	// never rewrites — to pair uploads with the correct local bytes.
+	uploadBySourceHash := make(map[string]config.IsolateSession, len(cfg.LastExtract.IsolateSessions))
+	for _, session := range cfg.LastExtract.IsolateSessions {
+		uploadBySourceHash[session.SourceHash] = session
+	}
+	for _, entry := range toUpload {
+		if _, ok := uploadBySourceHash[entry.SourceHash]; !ok {
+			return fmt.Errorf("isolate session missing staging path for %s", entry.File)
+		}
+	}
+
+	if err := publish.EnsureDatasetRepo(repoID); err != nil {
+		return err
+	}
+
+	commitMessage := "Publish Mnemosyne isolate export " + time.Now().UTC().Format(time.RFC3339)
+	for _, entry := range toUpload {
+		session := uploadBySourceHash[entry.SourceHash]
+		if err := publish.UploadFile(repoID, session.StagingPath, entry.File, commitMessage); err != nil {
+			return err
+		}
+	}
+	if err := publish.UploadFile(repoID, manifestPath, card.ManifestFileName, commitMessage); err != nil {
 		return err
 	}
 	if err := publish.UploadFile(repoID, readmePath, "README.md", commitMessage); err != nil {

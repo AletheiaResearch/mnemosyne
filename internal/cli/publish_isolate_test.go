@@ -43,6 +43,10 @@ case "$mode" in
     ;;
   download)
     # download <repoID> <pathInRepo> --repo-type dataset --local-dir <dir> --quiet
+    if [ -n "$MNEMOSYNE_DOWNLOAD_TRANSPORT_FAIL" ]; then
+      echo "hf: transient network failure (simulated)" >&2
+      exit 1
+    fi
     path_in_repo="$2"
     local_dir=""
     while [ $# -gt 0 ]; do
@@ -759,6 +763,99 @@ func TestPublishIsolate_RejectsMismatchedRedactionKeys(t *testing.T) {
 	}
 	if log := shim.readLog(t); strings.Contains(log, "repos create") {
 		t.Errorf("repos create must not run when preflight fails:\n%s", log)
+	}
+}
+
+// fetchRemoteManifest runs in runIsolatePublish. A transport failure there
+// must not leave an empty dataset repo on the hub — EnsureDatasetRepo is the
+// first remote side effect and it must stay below every local step that can
+// fail.
+func TestPublishIsolate_LocalFailureDoesNotCreateRepo(t *testing.T) {
+	shim := installHFShim(t)
+
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	seedIsolateConfig(t, cfgPath)
+
+	// Force every `hf download` to fail with a non-404 error so
+	// fetchRemoteManifest propagates the error instead of treating the
+	// remote as empty.
+	t.Setenv("MNEMOSYNE_DOWNLOAD_TRANSPORT_FAIL", "1")
+
+	rt := &runtime{
+		configPath: cfgPath,
+		logger:     newLogger(false),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+	}
+	_, err := runPublish(t, rt,
+		"--isolate",
+		"--publish-attestation", "I approve and authorize mnemosyne to publish and upload this archive.",
+	)
+	if err == nil {
+		t.Fatalf("expected transport error from shim, got nil")
+	}
+
+	if log := shim.readLog(t); strings.Contains(log, "repos create") {
+		t.Errorf("repos create must not run when local prep fails:\n%s", log)
+	}
+	for _, name := range shim.uploadedFiles(t) {
+		t.Errorf("no upload should ship when local prep fails; saw %q", name)
+	}
+}
+
+// Canonical publish does local prep (SummarizeFile, RenderManifest,
+// MkdirTemp, WriteFile) before any remote side effect. A failure in any
+// of those steps must not create the dataset repo.
+func TestPublishCanonical_LocalFailureDoesNotCreateRepo(t *testing.T) {
+	shim := installHFShim(t)
+
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	canonicalPath := filepath.Join(t.TempDir(), "canonical.jsonl")
+	// Write the file so DetectFileChange's Stat passes, then make it
+	// unreadable so SummarizeFile fails when it tries to Open(). Stat
+	// on a 0o000 file still succeeds (the parent dir is readable).
+	if err := os.WriteFile(canonicalPath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("write canonical: %v", err)
+	}
+	info, err := os.Stat(canonicalPath)
+	if err != nil {
+		t.Fatalf("stat canonical: %v", err)
+	}
+	if err := os.Chmod(canonicalPath, 0o000); err != nil {
+		t.Fatalf("chmod canonical: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(canonicalPath, 0o644) })
+
+	cfg := config.Default()
+	cfg.LastAttest = &config.LastAttest{
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		FilePath:  canonicalPath,
+		FileSize:  info.Size(),
+	}
+	cfg.ReviewerStatements = &config.ReviewerStatements{
+		IdentityScan:    "I scanned the export for my full name Test Reviewer and grep confirmed no matches remain.",
+		EntityInterview: "I reviewed for company, project, and tool references and found none requiring additional redaction.",
+		ManualReview:    "I performed a manual review of 20 random samples and confirmed redactions look correct.",
+	}
+	cfg.VerificationRecord = &config.VerificationRecord{FullName: "Test Reviewer", ManualSampleCount: 5}
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	rt := &runtime{
+		configPath: cfgPath,
+		logger:     newLogger(false),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+	}
+	_, err = runPublish(t, rt,
+		"--publish-attestation", "I approve and authorize mnemosyne to publish and upload this archive.",
+	)
+	if err == nil {
+		t.Fatalf("expected SummarizeFile error on unreadable canonical, got nil")
+	}
+	if log := shim.readLog(t); strings.Contains(log, "repos create") {
+		t.Errorf("repos create must not run when local prep fails:\n%s", log)
 	}
 }
 
