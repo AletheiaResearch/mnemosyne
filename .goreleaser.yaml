@@ -47,3 +47,36 @@ homebrew_casks:
 
 snapshot:
   version_template: "{{ .Version }}-next"
+
+changelog:
+  use: github
+  sort: asc
+  abbrev: -1
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^style:"
+      - "^ci:"
+      - "(?i)^Merge pull request"
+      - "(?i)^Merge remote-tracking branch"
+      - "(?i)^Merge branch"
+  groups:
+    - title: Features
+      regexp: "^.*feat(\\(.+\\))?!?:.*"
+      order: 0
+    - title: Bug fixes
+      regexp: "^.*fix(\\(.+\\))?!?:.*"
+      order: 1
+    - title: Performance improvements
+      regexp: "^.*perf(\\(.+\\))?!?:.*"
+      order: 2
+    - title: Refactors
+      regexp: "^.*refactor(\\(.+\\))?!?:.*"
+      order: 3
+    - title: Build & dependencies
+      regexp: "^.*build(\\(.+\\))?!?:.*"
+      order: 4
+    - title: Other changes
+      order: 999
