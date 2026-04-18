@@ -57,7 +57,7 @@ func newTransformCommand(rt *runtime) *cobra.Command {
 
 func transformRecords(in io.Reader, out io.Writer, serializer serialize.Serializer) error {
 	scanner := bufio.NewScanner(in)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), schema.MaxJSONLineBytes)
 	writer := bufio.NewWriter(out)
 
 	for scanner.Scan() {

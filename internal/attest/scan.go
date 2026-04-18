@@ -8,6 +8,7 @@ import (
 
 	"github.com/AletheiaResearch/mnemosyne/internal/card"
 	"github.com/AletheiaResearch/mnemosyne/internal/redact"
+	"github.com/AletheiaResearch/mnemosyne/internal/schema"
 )
 
 type NameScan struct {
@@ -42,7 +43,7 @@ func ScanFile(path string, fullName string, skipName bool) (Report, error) {
 	nameScan := NameScan{Skipped: skipName, FullName: fullName}
 
 	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 64*1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), schema.MaxJSONLineBytes)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !skipName && fullName != "" && strings.Contains(strings.ToLower(line), strings.ToLower(fullName)) {
