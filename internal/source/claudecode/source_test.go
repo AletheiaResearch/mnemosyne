@@ -120,7 +120,7 @@ func TestParseSession_PopulatesProvenance(t *testing.T) {
 		t.Fatalf("write fixture: %v", err)
 	}
 	src := &Source{root: dir}
-	record, err := src.parseSession(path)
+	record, err := src.parseSession("projA", path)
 	if err != nil {
 		t.Fatalf("parseSession: %v", err)
 	}
@@ -130,11 +130,48 @@ func TestParseSession_PopulatesProvenance(t *testing.T) {
 	if record.Provenance.SourcePath != path {
 		t.Fatalf("source_path = %q, want %q", record.Provenance.SourcePath, path)
 	}
-	if record.Provenance.SourceID != "session-abc" {
-		t.Fatalf("source_id = %q, want session-abc", record.Provenance.SourceID)
+	if record.Provenance.SourceID != "projA/session-abc" {
+		t.Fatalf("source_id = %q, want projA/session-abc", record.Provenance.SourceID)
 	}
 	if record.Provenance.SourceOrigin != "claudecode" {
 		t.Fatalf("source_origin = %q, want claudecode", record.Provenance.SourceOrigin)
+	}
+	if record.RecordID != "projA/session-abc" {
+		t.Fatalf("record_id = %q, want projA/session-abc (project-scoped)", record.RecordID)
+	}
+}
+
+// Two projects sharing a session filename must produce distinct record IDs so
+// the global seenRecordIDs dedup does not drop the second session.
+func TestParseSession_RecordIDIsProjectScoped(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	projA := filepath.Join(dir, "projA")
+	projB := filepath.Join(dir, "projB")
+	if err := os.MkdirAll(projA, 0o755); err != nil {
+		t.Fatalf("mkdir A: %v", err)
+	}
+	if err := os.MkdirAll(projB, 0o755); err != nil {
+		t.Fatalf("mkdir B: %v", err)
+	}
+	content := `{"type":"user","timestamp":"2026-04-17T11:18:19Z","cwd":"/tmp","gitBranch":"main","message":{"content":"hi"}}` + "\n" +
+		`{"type":"assistant","timestamp":"2026-04-17T11:18:20Z","cwd":"/tmp","gitBranch":"main","message":{"model":"claude-sonnet-4-6","content":[{"type":"text","text":"hello"}]}}` + "\n"
+	for _, proj := range []string{projA, projB} {
+		if err := os.WriteFile(filepath.Join(proj, "session.jsonl"), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", proj, err)
+		}
+	}
+	src := &Source{root: dir}
+	recA, err := src.parseSession("projA", filepath.Join(projA, "session.jsonl"))
+	if err != nil {
+		t.Fatalf("parseSession A: %v", err)
+	}
+	recB, err := src.parseSession("projB", filepath.Join(projB, "session.jsonl"))
+	if err != nil {
+		t.Fatalf("parseSession B: %v", err)
+	}
+	if recA.RecordID == recB.RecordID {
+		t.Fatalf("record ids collide across projects: %q", recA.RecordID)
 	}
 }
 
