@@ -62,6 +62,10 @@ mnemosyne transform \
 `--tools-file` replaces the entire inference + catalog pipeline, so you're
 in full control. This is the recommended escape hatch.
 
+The accepted JSON shape is formalised in
+[`schemas/tool-catalog-v1.json`](../../schemas/tool-catalog-v1.json); point
+your editor or `ajv`/`jsonschema` at it to validate a hand-authored file.
+
 ## Option 2 — instrument your harness with AGENTS.md / CLAUDE.md
 
 Works when you don't want to maintain a separate tools file and your
