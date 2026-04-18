@@ -1,0 +1,3 @@
+# Compiled Go test binaries (from `go test -c`, including cross-compiled)
+*.test
+*.test.exe
