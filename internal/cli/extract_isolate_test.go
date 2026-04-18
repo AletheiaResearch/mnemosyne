@@ -124,3 +124,87 @@ func TestExtractIsolate_ProducesStagingFilesAndPreservesSource(t *testing.T) {
 		t.Errorf("IsolateExport/AttachImages not persisted: isolate=%v attach=%v", cfg.IsolateExport, cfg.AttachImages)
 	}
 }
+
+// Subagent records carry Provenance.SourcePath that points at a directory
+// (the per-session subagents/ folder), which the native redactor cannot
+// open as a JSONL file. Isolate mode must ignore such records gracefully
+// and still emit the canonical record.
+func TestExtractIsolate_SkipsSubagentDirectoryProvenance(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Seed a claudecode project with a primary session AND a subagents/
+	// directory that would otherwise produce a directory-valued Provenance.
+	projDir := filepath.Join(home, ".claude", "projects", "demo")
+	sessionID := "root"
+	primaryPath := filepath.Join(projDir, sessionID+".jsonl")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatalf("mkdir proj: %v", err)
+	}
+	if err := os.WriteFile(primaryPath, []byte(extractIsolateClaudecode), 0o644); err != nil {
+		t.Fatalf("write primary: %v", err)
+	}
+
+	subagentDir := filepath.Join(projDir, sessionID, "subagents")
+	if err := os.MkdirAll(subagentDir, 0o755); err != nil {
+		t.Fatalf("mkdir subagents: %v", err)
+	}
+	subagentFile := filepath.Join(subagentDir, "child.jsonl")
+	if err := os.WriteFile(subagentFile, []byte(extractIsolateClaudecode), 0o644); err != nil {
+		t.Fatalf("write subagent: %v", err)
+	}
+
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	outPath := filepath.Join(t.TempDir(), "canonical.jsonl")
+	rt := &runtime{
+		configPath: cfgPath,
+		logger:     newLogger(false),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+	}
+
+	out, err := runExtract(t, rt,
+		"--scope", "claudecode",
+		"--include-all",
+		"--output", outPath,
+		"--isolate",
+	)
+	if err != nil {
+		t.Fatalf("extract: %v\noutput: %s", err, out)
+	}
+
+	// Only the primary session should produce a staging file; the
+	// subagent directory must be skipped cleanly.
+	stagingRoot := filepath.Join(filepath.Dir(outPath), "isolate", "claudecode")
+	entries, err := os.ReadDir(stagingRoot)
+	if err != nil {
+		t.Fatalf("read staging: %v", err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	if len(names) != 1 || names[0] != sessionID+".jsonl" {
+		t.Errorf("staging entries = %v, want [%s.jsonl]", names, sessionID)
+	}
+
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.LastExtract == nil {
+		t.Fatalf("LastExtract is nil")
+	}
+	if len(cfg.LastExtract.IsolateSessions) != 1 {
+		t.Errorf("isolate sessions = %d, want 1 (subagent dir should be skipped)", len(cfg.LastExtract.IsolateSessions))
+	}
+	// Canonical record for the subagent tree should still exist: the
+	// consumer pipeline is not affected by isolate skipping.
+	canonical, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read canonical: %v", err)
+	}
+	if !strings.Contains(string(canonical), ":subagents") {
+		t.Errorf("canonical record for subagent tree missing; got:\n%s", canonical)
+	}
+}

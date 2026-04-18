@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -178,6 +181,13 @@ func runIsolatePublish(cmd *cobra.Command, rt *runtime, cfg config.Config, repoI
 		if _, err := os.Stat(session.StagingPath); err != nil {
 			return fmt.Errorf("staging file %s: %w", session.StagingPath, err)
 		}
+		diskHash, err := hashStagingFile(session.StagingPath)
+		if err != nil {
+			return fmt.Errorf("hash staging file %s: %w", session.StagingPath, err)
+		}
+		if diskHash != session.RedactedHash {
+			return fmt.Errorf("staging file %s changed after extract (hash %s, manifest %s); re-run extract --isolate", session.StagingPath, diskHash, session.RedactedHash)
+		}
 		if err := publish.UploadFile(repoID, session.StagingPath, entry.File, commitMessage); err != nil {
 			return err
 		}
@@ -234,6 +244,22 @@ func runIsolatePublish(cmd *cobra.Command, rt *runtime, cfg config.Config, repoI
 		"sessions_uploaded": len(toUpload),
 		"sessions_total":    len(mergedEntries),
 	})
+}
+
+// hashStagingFile returns the sha256:<hex> digest of a staging file's current
+// contents so publish can refuse to upload bytes the manifest no longer
+// describes.
+func hashStagingFile(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	sum := sha256.New()
+	if _, err := io.Copy(sum, file); err != nil {
+		return "", err
+	}
+	return "sha256:" + hex.EncodeToString(sum.Sum(nil)), nil
 }
 
 // fetchRemoteManifest retrieves the existing manifest.mnemosyne from the remote

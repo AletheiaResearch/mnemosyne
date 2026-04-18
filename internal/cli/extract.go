@@ -366,6 +366,15 @@ func (a *runExtractionArgs) recordIsolate(ctx context.Context, origin, src strin
 		a.addWarning(fmt.Sprintf("isolate mode: %s record missing source path; skipping native export", origin))
 		return nil
 	}
+	info, err := os.Stat(src)
+	if err != nil {
+		a.addWarning(fmt.Sprintf("isolate mode: stat %s: %v; skipping native export", src, err))
+		return nil
+	}
+	if !info.Mode().IsRegular() {
+		a.addWarning(fmt.Sprintf("isolate mode: %s is not a regular file; skipping native export", src))
+		return nil
+	}
 	a.isolateMu.Lock()
 	if _, seen := a.isolateSeenSrc[src]; seen {
 		a.isolateMu.Unlock()
@@ -471,10 +480,17 @@ func extractBucket(
 					}
 					// Capture the source path before ApplyRecord's path
 					// anonymizer rewrites it (Provenance is a pointer, so
-					// ApplyRecord mutates the shared struct).
+					// ApplyRecord mutates the shared struct). Route by
+					// Provenance.SourceOrigin rather than record.Origin so
+					// multi-file variants (e.g. "claudecode-subagents") fall
+					// through to the not-supported warning instead of being
+					// handed a directory path.
 					isolateOrigin := record.Origin
 					isolateSrc := ""
 					if record.Provenance != nil {
+						if record.Provenance.SourceOrigin != "" {
+							isolateOrigin = record.Provenance.SourceOrigin
+						}
 						isolateSrc = record.Provenance.SourcePath
 					}
 					redacted, count := args.pipeline.ApplyRecord(record)

@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -151,11 +153,17 @@ func seedIsolateConfig(t *testing.T, cfgPath string) (stagingDir string, session
 	}
 	sessionA := filepath.Join(ccDir, "a.jsonl")
 	sessionB := filepath.Join(ccDir, "b.jsonl")
-	if err := os.WriteFile(sessionA, []byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"a"}]}}`+"\n"), 0o644); err != nil {
+	bodyA := []byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"a"}]}}` + "\n")
+	bodyB := []byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"b"}]}}` + "\n")
+	if err := os.WriteFile(sessionA, bodyA, 0o644); err != nil {
 		t.Fatalf("write a: %v", err)
 	}
-	if err := os.WriteFile(sessionB, []byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"b"}]}}`+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(sessionB, bodyB, 0o644); err != nil {
 		t.Fatalf("write b: %v", err)
+	}
+	hashBytes := func(b []byte) string {
+		sum := sha256.Sum256(b)
+		return "sha256:" + hex.EncodeToString(sum[:])
 	}
 
 	cfg := config.Default()
@@ -188,9 +196,9 @@ func seedIsolateConfig(t *testing.T, cfgPath string) (stagingDir string, session
 				Format:       "claudecode",
 				SourcePath:   "/original/a.jsonl",
 				StagingPath:  sessionA,
-				SourceHash:   "sha256:srcA",
+				SourceHash:   hashBytes(bodyA),
 				RedactionKey: "v1:v1:sha256:cfg:strip-images",
-				RedactedHash: "sha256:redA",
+				RedactedHash: hashBytes(bodyA),
 				Lines:        1,
 			},
 			{
@@ -198,9 +206,9 @@ func seedIsolateConfig(t *testing.T, cfgPath string) (stagingDir string, session
 				Format:       "claudecode",
 				SourcePath:   "/original/b.jsonl",
 				StagingPath:  sessionB,
-				SourceHash:   "sha256:srcB",
+				SourceHash:   hashBytes(bodyB),
 				RedactionKey: "v1:v1:sha256:cfg:strip-images",
-				RedactedHash: "sha256:redB",
+				RedactedHash: hashBytes(bodyB),
 				Lines:        1,
 			},
 		},
@@ -350,20 +358,23 @@ func TestPublishIsolate_DetectsChangedSession(t *testing.T) {
 	shim.clearLog(t)
 	shim.clearUploadDir(t)
 
-	// Bump one session's redacted hash in the config and leave the other
-	// alone. Only the changed session should reupload.
+	// Rewrite the staging file for session A and sync the config's cached
+	// hashes to the new disk content, mirroring what extract --isolate
+	// would have done. Only the changed session should reupload.
+	newBody := []byte(`{"changed":true}` + "\n")
+	if err := os.WriteFile(sessions[0], newBody, 0o644); err != nil {
+		t.Fatalf("mutate staging: %v", err)
+	}
+	newSum := sha256.Sum256(newBody)
+	newHash := "sha256:" + hex.EncodeToString(newSum[:])
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	cfg.LastExtract.IsolateSessions[0].RedactedHash = "sha256:changedA"
-	cfg.LastExtract.IsolateSessions[0].SourceHash = "sha256:newsrcA"
+	cfg.LastExtract.IsolateSessions[0].RedactedHash = newHash
+	cfg.LastExtract.IsolateSessions[0].SourceHash = newHash
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("save: %v", err)
-	}
-	// Rewrite the staging file so the upload has content to send.
-	if err := os.WriteFile(sessions[0], []byte(`{"changed":true}`+"\n"), 0o644); err != nil {
-		t.Fatalf("mutate staging: %v", err)
 	}
 
 	if _, err := runPublish(t, rt,
@@ -383,6 +394,44 @@ func TestPublishIsolate_DetectsChangedSession(t *testing.T) {
 	}
 	if uploadedSet["b.jsonl"] {
 		t.Errorf("unchanged session b.jsonl should not reupload; got: %v", uploaded)
+	}
+}
+
+func TestPublishIsolate_RejectsTamperedStaging(t *testing.T) {
+	shim := installHFShim(t)
+
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	_, sessions := seedIsolateConfig(t, cfgPath)
+
+	// Mutate the staging file on disk without updating the config. The
+	// manifest still advertises the original redacted_hash; publish must
+	// refuse to ship bytes that don't match.
+	if err := os.WriteFile(sessions[0], []byte(`{"tampered":true}`+"\n"), 0o644); err != nil {
+		t.Fatalf("tamper staging: %v", err)
+	}
+
+	rt := &runtime{
+		configPath: cfgPath,
+		logger:     newLogger(false),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+	}
+	_, err := runPublish(t, rt,
+		"--isolate",
+		"--publish-attestation", "I approve and authorize mnemosyne to publish and upload this archive.",
+	)
+	if err == nil {
+		t.Fatalf("expected tamper-detection error, got nil")
+	}
+	if !strings.Contains(err.Error(), "changed after extract") {
+		t.Fatalf("expected changed-after-extract error, got: %v", err)
+	}
+
+	uploaded := shim.uploadedFiles(t)
+	for _, name := range uploaded {
+		if name == "a.jsonl" || name == card.ManifestFileName || name == "README.md" {
+			t.Errorf("nothing should ship after tamper detection; saw %q", name)
+		}
 	}
 }
 
