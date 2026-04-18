@@ -186,7 +186,7 @@ func TestProjectAPIKeyVerification(t *testing.T) {
 	var mu sync.Mutex
 	var bodies []string
 	us := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/decide/" {
+		if r.URL.Path != "/flags/" {
 			http.NotFound(w, r)
 			return
 		}
@@ -219,7 +219,7 @@ func TestProjectAPIKeyVerification(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	if len(bodies) != 1 || !strings.Contains(bodies[0], good) {
-		t.Fatalf("expected /decide body to embed key, got %v", bodies)
+		t.Fatalf("expected /flags body to embed key, got %v", bodies)
 	}
 }
 

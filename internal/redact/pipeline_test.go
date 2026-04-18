@@ -104,7 +104,7 @@ func TestPipelineRedactsWithVerification(t *testing.T) {
 			}
 			w.WriteHeader(http.StatusOK)
 			_, _ = io.WriteString(w, `{"email":"ok@example.com"}`)
-		case "/decide/":
+		case "/flags/":
 			projectHits.Add(1)
 			body, _ := io.ReadAll(r.Body)
 			if !strings.Contains(string(body), project) {
@@ -186,7 +186,7 @@ func TestPipelineRedactsWithVerification(t *testing.T) {
 		t.Fatalf("expected /api/users/@me/ to be queried")
 	}
 	if projectHits.Load() == 0 {
-		t.Fatalf("expected /decide/ to be queried")
+		t.Fatalf("expected /flags/ to be queried")
 	}
 }
 

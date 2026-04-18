@@ -1,9 +1,9 @@
 // Package posthog contributes trufflehog-compatible detectors for
 // PostHog-issued keys. It covers three prefixes:
 //
-//   - phx_ personal API keys (verifiable via /api/users/@me/)
+//   - phx_ personal API keys (verifiable via /api/users/@me/ on the app host)
 //   - phs_ feature-flag secure keys (no public verification surface)
-//   - phc_ project capture keys (verifiable via /decide/?v=3)
+//   - phc_ project capture keys (verifiable via /flags/?v=2 on the ingestion host)
 //
 // Register the scanners with the shared redact registry by blank
 // importing this package; see register.go. Callers that need explicit
@@ -27,13 +27,22 @@ import (
 	"github.com/trufflesecurity/trufflehog/v3/pkg/pb/detector_typepb"
 )
 
-// DefaultBaseURLs lists the PostHog region roots queried for
-// verification. Order matters: the first host is tried first and
-// remaining hosts are fallbacks used when the primary returns 401
-// (the key may belong to a different region).
+// DefaultBaseURLs lists the PostHog app-host region roots used by the
+// personal-API-key verifier. Order matters: the first host is tried
+// first and remaining hosts are fallbacks used when the primary returns
+// 401 (the key may belong to a different region).
 var DefaultBaseURLs = []string{
 	"https://us.posthog.com",
 	"https://eu.posthog.com",
+}
+
+// DefaultProjectAPIBaseURLs lists the PostHog ingestion-host region
+// roots used by the project-API-key verifier. PostHog documents project
+// (phc_) flag evaluation on the `.i.posthog.com` hosts rather than the
+// app hosts used for personal keys.
+var DefaultProjectAPIBaseURLs = []string{
+	"https://us.i.posthog.com",
+	"https://eu.i.posthog.com",
 }
 
 // defaultHTTPClient is built lazily so the regex-only path pays no
@@ -114,7 +123,7 @@ func keyRegex(prefix string) *regexp.Regexp {
 }
 
 // NewPersonalAPIKeyScanner returns a Scanner for phx_ personal API keys.
-// Verification hits /api/users/@me/; 200 marks the key live.
+// Verification hits /api/users/@me/ on the app host; 200 marks the key live.
 func NewPersonalAPIKeyScanner(opts ...Option) *Scanner {
 	return buildScanner(
 		"PostHogPersonalAPIKey",
@@ -122,27 +131,29 @@ func NewPersonalAPIKeyScanner(opts ...Option) *Scanner {
 		"PostHog personal API key (grants access to the authenticated user's account).",
 		versionPersonalAPIKey,
 		verifyPersonalAPIKey,
+		DefaultBaseURLs,
 		opts,
 	)
 }
 
 // NewFeatureFlagSecureKeyScanner returns a Scanner for phs_ feature-flag
 // secure keys. Verification is a no-op — phs_ keys are server-side inputs
-// to /decide with no public "is-this-valid" endpoint.
+// to /flags with no public "is-this-valid" endpoint.
 func NewFeatureFlagSecureKeyScanner(opts ...Option) *Scanner {
 	return buildScanner(
 		"PostHogFeatureFlagSecureKey",
 		"phs_",
-		"PostHog feature-flag secure key (server-side secret used with /decide).",
+		"PostHog feature-flag secure key (server-side secret used with /flags).",
 		versionFeatureFlagSecureKey,
 		nil,
+		DefaultBaseURLs,
 		opts,
 	)
 }
 
 // NewProjectAPIKeyScanner returns a Scanner for phc_ project capture keys.
-// Verification posts to /decide/?v=3; these keys are public-facing so
-// "verified" simply means PostHog recognises them.
+// Verification posts to /flags/?v=2 on the ingestion host; these keys are
+// public-facing so "verified" simply means PostHog recognises them.
 func NewProjectAPIKeyScanner(opts ...Option) *Scanner {
 	return buildScanner(
 		"PostHogProjectAPIKey",
@@ -150,11 +161,12 @@ func NewProjectAPIKeyScanner(opts ...Option) *Scanner {
 		"PostHog project capture key (client-side token posted to /capture).",
 		versionProjectAPIKey,
 		verifyProjectAPIKey,
+		DefaultProjectAPIBaseURLs,
 		opts,
 	)
 }
 
-func buildScanner(name, prefix, description string, version int, verify verifyFunc, opts []Option) *Scanner {
+func buildScanner(name, prefix, description string, version int, verify verifyFunc, defaultBaseURLs []string, opts []Option) *Scanner {
 	s := &Scanner{
 		name:        name,
 		prefix:      prefix,
@@ -162,7 +174,7 @@ func buildScanner(name, prefix, description string, version int, verify verifyFu
 		version:     version,
 		regex:       keyRegex(prefix),
 		verify:      verify,
-		baseURLs:    append([]string(nil), DefaultBaseURLs...),
+		baseURLs:    append([]string(nil), defaultBaseURLs...),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -281,7 +293,7 @@ func verifyProjectAPIKey(ctx context.Context, s *Scanner, key string, result *th
 	var lastErr error
 	for i, base := range s.baseURLs {
 		body := strings.NewReader(fmt.Sprintf(`{"api_key":%q,"distinct_id":"trufflehog-verify"}`, key))
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/decide/?v=3", body)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/flags/?v=2", body)
 		if err != nil {
 			lastErr = err
 			continue
@@ -300,7 +312,7 @@ func verifyProjectAPIKey(ctx context.Context, s *Scanner, key string, result *th
 				result.Verified = true
 				return
 			}
-			lastErr = errors.New("posthog decide returned 200 with non-JSON body")
+			lastErr = errors.New("posthog flags returned 200 with non-JSON body")
 		case http.StatusUnauthorized:
 			lastErr = nil
 		default:
