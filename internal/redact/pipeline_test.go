@@ -312,9 +312,12 @@ func TestTrufflehogRunnerRedactsMultipartSecretFully(t *testing.T) {
 }
 
 // TestTrufflehogRunnerRedactsMultipartSecretSplitAcrossLines covers the
-// .env-style case where the identifier and secret appear on separate
-// lines, so the combined RawV2 substring isn't present — the runner
-// must fall back to stripping Raw alone.
+// case where the identifier and secret appear on separate lines, so the
+// combined RawV2 substring isn't present. The runner must scrub both
+// halves — previously only Raw was replaced and the secret leaked.
+// Uses neutral "cred"/"material" labels so the regex pass (env_assign,
+// generic_assign) doesn't independently redact the secret and mask a
+// regression in the trufflehog fallback.
 func TestTrufflehogRunnerRedactsMultipartSecretSplitAcrossLines(t *testing.T) {
 	t.Parallel()
 
@@ -333,10 +336,13 @@ func TestTrufflehogRunnerRedactsMultipartSecretSplitAcrossLines(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	input := "AWS_ACCESS_KEY_ID=" + id + "\nAWS_SECRET_ACCESS_KEY=" + secret
+	input := "cred: " + id + "\nmaterial: " + secret
 	out := pipeline.applyText(input, &ApplyStats{})
 	if strings.Contains(out, id) {
 		t.Fatalf("identifier still present when RawV2 isn't contiguous: %q", out)
+	}
+	if strings.Contains(out, secret) {
+		t.Fatalf("secret still present when RawV2 isn't contiguous: %q", out)
 	}
 	if !strings.Contains(out, PlaceholderMarker) {
 		t.Fatalf("expected placeholder marker, got %q", out)

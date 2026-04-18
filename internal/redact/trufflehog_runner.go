@@ -2,6 +2,7 @@ package redact
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	thdet "github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
@@ -85,12 +86,11 @@ func (r *trufflehogRunner) Redact(input string, stats *ApplyStats) (string, int)
 				}
 				seen[key] = struct{}{}
 				// Strip the combined form first so the full "id:secret"
-				// substring is redacted when it appears contiguously, then
-				// fall through to the bare identifier so the ID is still
-				// scrubbed when the two halves are split across lines
-				// (e.g. a .env file with ID and secret on separate keys).
+				// substring is redacted when it appears contiguously.
+				combinedHits := 0
 				if rawV2 != "" {
 					replaced, n := stringsReplaceAll(out, rawV2, PlaceholderMarker)
+					combinedHits = n
 					out = replaced
 					count += n
 				}
@@ -98,6 +98,24 @@ func (r *trufflehogRunner) Redact(input string, stats *ApplyStats) (string, int)
 					replaced, n := stringsReplaceAll(out, raw, PlaceholderMarker)
 					out = replaced
 					count += n
+				}
+				// When the combined form wasn't found as one substring, the
+				// secret half of a multipart credential (the non-identifier
+				// portion of RawV2) may still be sitting in the output —
+				// e.g. a .env file with AWS_ACCESS_KEY_ID=... and
+				// AWS_SECRET_ACCESS_KEY=... on separate lines. Stripping
+				// Raw alone redacts the ID but leaves the secret visible,
+				// so split RawV2 on Raw and scrub each remaining segment.
+				if combinedHits == 0 && raw != "" && rawV2 != "" && rawV2 != raw && strings.Contains(rawV2, raw) {
+					for _, part := range strings.Split(rawV2, raw) {
+						part = strings.Trim(part, ":;,=|& \t\r\n\"'<>()[]{}")
+						if part == "" {
+							continue
+						}
+						replaced, n := stringsReplaceAll(out, part, PlaceholderMarker)
+						out = replaced
+						count += n
+					}
 				}
 			}
 		}
