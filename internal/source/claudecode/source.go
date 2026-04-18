@@ -66,10 +66,9 @@ func (s *Source) Discover(context.Context) ([]source.Grouping, error) {
 }
 
 func (s *Source) groupingLabel(files []string, dirName string) string {
-	cwd := probeCwd(files)
-	if cwd != "" {
-		if base := filepath.Base(cwd); base != "." && base != string(filepath.Separator) {
-			return base
+	if cwd := probeCwd(files); cwd != "" {
+		if label := source.DisplayLabelFromPath(cwd); label != "" {
+			return label
 		}
 	}
 	return decodeProjectName(dirName)
