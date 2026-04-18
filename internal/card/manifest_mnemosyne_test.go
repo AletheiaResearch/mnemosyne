@@ -120,7 +120,7 @@ func TestDiffManifestSessions_FourQuadrants(t *testing.T) {
 		{File: "z.jsonl", SourceHash: "sha256:z", RedactionKey: "v1:keep", RedactedHash: "sha256:zz"},
 	}
 
-	toUpload, toRetain := DiffManifestSessions(local, remote)
+	toUpload, toRetain, aligned := DiffManifestSessions(local, remote)
 	uploadFiles := make([]string, 0, len(toUpload))
 	for _, entry := range toUpload {
 		uploadFiles = append(uploadFiles, entry.File)
@@ -132,6 +132,14 @@ func TestDiffManifestSessions_FourQuadrants(t *testing.T) {
 	}
 	if len(toRetain) != 1 || toRetain[0].File != "z.jsonl" {
 		t.Errorf("retained = %+v, want only z.jsonl", toRetain)
+	}
+	if len(aligned) != len(local) {
+		t.Fatalf("aligned = %d, want %d", len(aligned), len(local))
+	}
+	for i, got := range aligned {
+		if got.File != local[i].File {
+			t.Errorf("aligned[%d] should not rewrite File when no content match; got %q, want %q", i, got.File, local[i].File)
+		}
 	}
 }
 
@@ -147,9 +155,67 @@ func TestDiffManifestSessions_RedactedHashDivergence(t *testing.T) {
 	remote := []ManifestEntry{
 		{File: "a.jsonl", SourceHash: "sha256:a", RedactionKey: "v1:keep", RedactedHash: "sha256:OLD"},
 	}
-	toUpload, _ := DiffManifestSessions(local, remote)
+	toUpload, _, _ := DiffManifestSessions(local, remote)
 	if len(toUpload) != 1 || toUpload[0].File != "a.jsonl" {
 		t.Fatalf("divergent redacted_hash must force upload; got: %+v", toUpload)
+	}
+}
+
+// When a source file moves on disk, its parent directory hash changes,
+// which changes the isolate File label. The bytes are unchanged, so the
+// content tuple (source_hash, redaction_key, redacted_hash) still
+// matches a remote entry under the old path. Diff must recognise the
+// content identity, skip the upload, and rewrite the local File to the
+// remote's path so Merge produces exactly one entry for those bytes.
+func TestDiffManifestSessions_ContentMatchAdoptsRemotePath(t *testing.T) {
+	t.Parallel()
+	local := []ManifestEntry{
+		{File: "claudecode/NEW/x.jsonl", SourceHash: "sha256:x", RedactionKey: "v1:keep", RedactedHash: "sha256:xx"},
+	}
+	remote := []ManifestEntry{
+		{File: "claudecode/OLD/x.jsonl", SourceHash: "sha256:x", RedactionKey: "v1:keep", RedactedHash: "sha256:xx"},
+	}
+
+	toUpload, toRetain, aligned := DiffManifestSessions(local, remote)
+	if len(toUpload) != 0 {
+		t.Errorf("content match must not upload; got: %+v", toUpload)
+	}
+	if len(toRetain) != 0 {
+		t.Errorf("remote entry is replaced by the aligned local; got retained: %+v", toRetain)
+	}
+	if len(aligned) != 1 || aligned[0].File != "claudecode/OLD/x.jsonl" {
+		t.Fatalf("aligned local must adopt remote path; got: %+v", aligned)
+	}
+
+	merged := MergeManifestEntries(aligned, remote)
+	if len(merged) != 1 {
+		t.Fatalf("merged should collapse to one entry; got %d: %+v", len(merged), merged)
+	}
+	if merged[0].File != "claudecode/OLD/x.jsonl" || merged[0].SourceHash != "sha256:x" {
+		t.Errorf("merged entry wrong: %+v", merged[0])
+	}
+}
+
+// Content match must NOT paper over real content divergence: if a local
+// entry has a different File AND a different redacted_hash, it must
+// still upload under its own File (not adopt the remote path).
+func TestDiffManifestSessions_ContentDivergenceStillUploads(t *testing.T) {
+	t.Parallel()
+	local := []ManifestEntry{
+		{File: "claudecode/NEW/x.jsonl", SourceHash: "sha256:x", RedactionKey: "v1:keep", RedactedHash: "sha256:NEW"},
+	}
+	remote := []ManifestEntry{
+		{File: "claudecode/OLD/x.jsonl", SourceHash: "sha256:x", RedactionKey: "v1:keep", RedactedHash: "sha256:OLD"},
+	}
+	toUpload, toRetain, aligned := DiffManifestSessions(local, remote)
+	if len(toUpload) != 1 || toUpload[0].File != "claudecode/NEW/x.jsonl" {
+		t.Fatalf("divergent redacted_hash must upload under local File; got: %+v", toUpload)
+	}
+	if aligned[0].File != "claudecode/NEW/x.jsonl" {
+		t.Errorf("aligned must preserve local File when content diverges; got: %+v", aligned[0])
+	}
+	if len(toRetain) != 1 || toRetain[0].File != "claudecode/OLD/x.jsonl" {
+		t.Errorf("remote entry with divergent content should stay in retained for merge-loser handling; got: %+v", toRetain)
 	}
 }
 

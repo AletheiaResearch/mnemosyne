@@ -397,6 +397,100 @@ func TestPublishIsolate_DetectsChangedSession(t *testing.T) {
 	}
 }
 
+// When a source file moves on disk between publishes (e.g. a Codex
+// session aging from sessions/ into archived_sessions/, or a Claude
+// project directory rename), its staging File changes because the hash
+// prefix is derived from the source's parent directory. The bytes are
+// unchanged, so the content tuple still matches the remote. Publish
+// must recognise the relocation by content, skip the upload, and retain
+// a single manifest entry for those bytes — no duplicate.
+func TestPublishIsolate_SourceRelocationDoesNotDuplicate(t *testing.T) {
+	shim := installHFShim(t)
+
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	seedIsolateConfig(t, cfgPath)
+
+	rt := &runtime{
+		configPath: cfgPath,
+		logger:     newLogger(false),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+	}
+	if _, err := runPublish(t, rt,
+		"--isolate",
+		"--publish-attestation", "I approve and authorize mnemosyne to publish and upload this archive.",
+	); err != nil {
+		t.Fatalf("first publish: %v", err)
+	}
+
+	// Snapshot the manifest produced by the first publish; this is what
+	// the second publish will see as "remote".
+	remoteManifest := filepath.Join(shim.uploadDir, card.ManifestFileName)
+	manifestCopy := filepath.Join(t.TempDir(), card.ManifestFileName)
+	data, err := os.ReadFile(remoteManifest)
+	if err != nil {
+		t.Fatalf("read remote manifest: %v", err)
+	}
+	if err := os.WriteFile(manifestCopy, data, 0o644); err != nil {
+		t.Fatalf("write manifest copy: %v", err)
+	}
+	shim.setRemoteManifest(t, manifestCopy)
+	shim.clearLog(t)
+	shim.clearUploadDir(t)
+
+	// Simulate a source-file move: the bytes (and thus SourceHash /
+	// RedactionKey / RedactedHash) are unchanged, but the File label now
+	// points at a new hashed subdirectory — just like it would after a
+	// user renamed the source's parent directory and re-ran extract.
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	cfg.LastExtract.IsolateSessions[0].File = "claudecode/aaaabbbb/a.jsonl"
+	cfg.LastExtract.IsolateSessions[1].File = "claudecode/ccccdddd/b.jsonl"
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	if _, err := runPublish(t, rt,
+		"--isolate",
+		"--publish-attestation", "I approve and authorize mnemosyne to publish and upload this archive.",
+	); err != nil {
+		t.Fatalf("second publish: %v\nhf log:\n%s", err, shim.readLog(t))
+	}
+
+	uploaded := shim.uploadedFiles(t)
+	for _, name := range uploaded {
+		if name == "a.jsonl" || name == "b.jsonl" {
+			t.Errorf("relocation must not re-upload unchanged bytes; got upload of %q\nhf log:\n%s", name, shim.readLog(t))
+		}
+	}
+
+	// The second publish's manifest must contain exactly one entry per
+	// original File (no duplicates) and must preserve the remote's path
+	// label rather than adopting the relocated one, so retained remote
+	// consumers still resolve the same URL.
+	newManifestPath := filepath.Join(shim.uploadDir, card.ManifestFileName)
+	newManifestBytes, err := os.ReadFile(newManifestPath)
+	if err != nil {
+		t.Fatalf("read new manifest: %v", err)
+	}
+	_, entries, err := card.ParseManifestMnemosyne(bytes.NewReader(newManifestBytes))
+	if err != nil {
+		t.Fatalf("parse new manifest: %v", err)
+	}
+	seen := make(map[string]int, len(entries))
+	for _, entry := range entries {
+		seen[entry.File]++
+	}
+	if seen["claudecode/a.jsonl"] != 1 || seen["claudecode/b.jsonl"] != 1 {
+		t.Errorf("expected single entries at remote paths; got map: %v\nentries: %+v", seen, entries)
+	}
+	if seen["claudecode/aaaabbbb/a.jsonl"] != 0 || seen["claudecode/ccccdddd/b.jsonl"] != 0 {
+		t.Errorf("relocated local paths must not appear in published manifest; got map: %v", seen)
+	}
+}
+
 func TestPublishIsolate_RejectsTamperedStaging(t *testing.T) {
 	shim := installHFShim(t)
 

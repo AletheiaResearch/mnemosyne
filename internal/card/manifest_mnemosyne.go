@@ -135,49 +135,96 @@ func ParseManifestMnemosyne(r io.Reader) (ManifestHeader, []ManifestEntry, error
 	return header, entries, nil
 }
 
+// contentKey is the identity tuple that uniquely describes the bytes of
+// a session and the redaction posture they were produced under. The File
+// field is deliberately excluded: it is a repo-path *label*, not the
+// session's identity, and rewriting a local File to adopt a remote one
+// is safe when the content tuple matches.
+func contentKey(entry ManifestEntry) string {
+	return entry.SourceHash + "|" + entry.RedactionKey + "|" + entry.RedactedHash
+}
+
 // DiffManifestSessions compares local entries against what the remote manifest
-// already holds. An entry is in toUpload when the remote has no file with the
-// same name, or when any of source_hash, redaction_key, or redacted_hash
-// differ. redacted_hash is part of the comparison because it is what the
-// published manifest advertises for the uploaded bytes — skipping an upload
+// already holds and decides which sessions still need to be uploaded.
+//
+// Decision per local entry:
+//  1. A remote entry exists with the same File and an identical content
+//     tuple → no upload; the local entry passes through unchanged.
+//  2. A remote entry exists with a different File but an identical
+//     content tuple → no upload. The local entry's File is *rewritten*
+//     to match the remote's so that downstream MergeManifestEntries
+//     collapses them into a single record. This is how a moved source
+//     (e.g. a Codex session aging into archived_sessions/) avoids
+//     accumulating as a duplicate in the repo.
+//  3. Otherwise → upload. Either the remote has no matching content or
+//     the content diverges (source, key, or redacted bytes changed).
+//
+// redacted_hash participates in the comparison because the published
+// manifest advertises it for the uploaded bytes; skipping an upload
 // while overwriting the manifest's redacted_hash would leave the repo
-// advertising bytes it does not contain. toRetain contains remote entries
-// that survive (still exist locally unchanged, or only exist remotely).
-func DiffManifestSessions(local, remote []ManifestEntry) (toUpload, toRetain []ManifestEntry) {
+// advertising bytes it does not contain.
+//
+// The returned `aligned` slice mirrors `local` 1:1 but with any adopted
+// Files applied. Callers must pass `aligned` (not the raw `local`) to
+// MergeManifestEntries and use it to resolve the upload destination for
+// entries still in `toUpload`. `toRetain` contains remote entries that
+// survive because no local entry replaces them (by File or by content).
+func DiffManifestSessions(local, remote []ManifestEntry) (toUpload, toRetain, aligned []ManifestEntry) {
 	remoteByFile := make(map[string]ManifestEntry, len(remote))
+	remoteByContent := make(map[string]ManifestEntry, len(remote))
 	for _, entry := range remote {
 		remoteByFile[entry.File] = entry
-	}
-	localByFile := make(map[string]ManifestEntry, len(local))
-	for _, entry := range local {
-		localByFile[entry.File] = entry
+		if key := contentKey(entry); key != "||" {
+			remoteByContent[key] = entry
+		}
 	}
 
+	aligned = make([]ManifestEntry, 0, len(local))
 	toUpload = make([]ManifestEntry, 0)
+	claimedRemoteFiles := make(map[string]struct{}, len(local))
+
 	for _, entry := range local {
-		existing, ok := remoteByFile[entry.File]
-		if !ok ||
-			existing.SourceHash != entry.SourceHash ||
-			existing.RedactionKey != entry.RedactionKey ||
-			existing.RedactedHash != entry.RedactedHash {
-			toUpload = append(toUpload, entry)
+		if existing, ok := remoteByFile[entry.File]; ok &&
+			existing.SourceHash == entry.SourceHash &&
+			existing.RedactionKey == entry.RedactionKey &&
+			existing.RedactedHash == entry.RedactedHash {
+			aligned = append(aligned, entry)
+			claimedRemoteFiles[entry.File] = struct{}{}
+			continue
 		}
+		if existing, ok := remoteByContent[contentKey(entry)]; ok && existing.File != entry.File {
+			if _, already := claimedRemoteFiles[existing.File]; !already {
+				rewritten := entry
+				rewritten.File = existing.File
+				aligned = append(aligned, rewritten)
+				claimedRemoteFiles[existing.File] = struct{}{}
+				continue
+			}
+		}
+		aligned = append(aligned, entry)
+		toUpload = append(toUpload, entry)
+		claimedRemoteFiles[entry.File] = struct{}{}
 	}
 
 	toRetain = make([]ManifestEntry, 0)
 	for _, entry := range remote {
-		if _, replaced := localByFile[entry.File]; replaced {
+		if _, replaced := claimedRemoteFiles[entry.File]; replaced {
 			continue
 		}
 		toRetain = append(toRetain, entry)
 	}
-	return toUpload, toRetain
+	return toUpload, toRetain, aligned
 }
 
 // MergeManifestEntries produces the new entries list for publication: any
 // local entry replaces a same-file remote entry; remote entries that don't
 // collide with a local file are preserved. Order: local first (stable), then
 // retained remote (stable).
+//
+// Callers publishing after DiffManifestSessions MUST pass the aligned
+// local slice — not the raw pre-diff slice — so that any local entry
+// whose File was rewritten to adopt a remote path collapses cleanly
+// with that remote entry instead of accumulating alongside it.
 func MergeManifestEntries(local, remote []ManifestEntry) []ManifestEntry {
 	localFiles := make(map[string]struct{}, len(local))
 	for _, entry := range local {

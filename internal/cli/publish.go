@@ -194,16 +194,20 @@ func runIsolatePublish(cmd *cobra.Command, rt *runtime, cfg config.Config, repoI
 		return err
 	}
 
-	toUpload, _ := card.DiffManifestSessions(localEntries, remoteEntries)
-	mergedEntries := card.MergeManifestEntries(localEntries, remoteEntries)
+	toUpload, _, alignedEntries := card.DiffManifestSessions(localEntries, remoteEntries)
+	mergedEntries := card.MergeManifestEntries(alignedEntries, remoteEntries)
 
 	commitMessage := "Publish Mnemosyne isolate export " + time.Now().UTC().Format(time.RFC3339)
-	uploadByFile := make(map[string]config.IsolateSession, len(cfg.LastExtract.IsolateSessions))
+	// Aligned entries may carry a File adopted from the remote manifest
+	// (when the bytes are unchanged but the source moved on disk), so
+	// key the staging-path lookup by SourceHash — the one field Diff
+	// never rewrites — to pair uploads with the correct local bytes.
+	uploadBySourceHash := make(map[string]config.IsolateSession, len(cfg.LastExtract.IsolateSessions))
 	for _, session := range cfg.LastExtract.IsolateSessions {
-		uploadByFile[session.File] = session
+		uploadBySourceHash[session.SourceHash] = session
 	}
 	for _, entry := range toUpload {
-		session, ok := uploadByFile[entry.File]
+		session, ok := uploadBySourceHash[entry.SourceHash]
 		if !ok {
 			return fmt.Errorf("isolate session missing staging path for %s", entry.File)
 		}
