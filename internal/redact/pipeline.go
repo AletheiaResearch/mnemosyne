@@ -54,22 +54,22 @@ func FromConfig(cfg config.Config) (*Pipeline, error) {
 
 func (p *Pipeline) ApplyRecord(record schema.Record) (schema.Record, int) {
 	count := 0
-	record.Grouping, count = p.applyText(record.Grouping)
-	record.Branch, count = p.add(record.Branch, count, p.applyText)
-	record.WorkingDir, count = p.add(record.WorkingDir, count, p.applyPath)
-	record.Title, count = p.add(record.Title, count, p.applyText)
+	record.Grouping, count = p.ApplyText(record.Grouping)
+	record.Branch, count = p.add(record.Branch, count, p.ApplyText)
+	record.WorkingDir, count = p.add(record.WorkingDir, count, p.ApplyPath)
+	record.Title, count = p.add(record.Title, count, p.ApplyText)
 
 	if record.Extensions != nil {
-		updated, c := p.applyAny(record.Extensions, "")
+		updated, c := p.ApplyAny(record.Extensions, "")
 		record.Extensions = updated.(map[string]any)
 		count += c
 	}
 
 	if record.Provenance != nil {
-		record.Provenance.SourcePath, count = p.add(record.Provenance.SourcePath, count, p.applyPath)
-		record.Provenance.SourceID, count = p.add(record.Provenance.SourceID, count, p.applyText)
+		record.Provenance.SourcePath, count = p.add(record.Provenance.SourcePath, count, p.ApplyPath)
+		record.Provenance.SourceID, count = p.add(record.Provenance.SourceID, count, p.ApplyText)
 		if record.Provenance.Extensions != nil {
-			updated, c := p.applyAny(record.Provenance.Extensions, "")
+			updated, c := p.ApplyAny(record.Provenance.Extensions, "")
 			record.Provenance.Extensions = updated.(map[string]any)
 			count += c
 		}
@@ -98,10 +98,10 @@ func (p *Pipeline) ScanRecord(record schema.Record) Findings {
 }
 
 func (p *Pipeline) applyTurn(turn schema.Turn, count int) (schema.Turn, int) {
-	turn.Text, count = p.add(turn.Text, count, p.applyText)
-	turn.Reasoning, count = p.add(turn.Reasoning, count, p.applyText)
+	turn.Text, count = p.add(turn.Text, count, p.ApplyText)
+	turn.Reasoning, count = p.add(turn.Reasoning, count, p.ApplyText)
 	if turn.Extensions != nil {
-		updated, c := p.applyAny(turn.Extensions, "")
+		updated, c := p.ApplyAny(turn.Extensions, "")
 		turn.Extensions = updated.(map[string]any)
 		count += c
 	}
@@ -109,43 +109,47 @@ func (p *Pipeline) applyTurn(turn schema.Turn, count int) (schema.Turn, int) {
 		turn.Attachments[idx], count = p.applyBlock(block, count)
 	}
 	for idx, call := range turn.ToolCalls {
-		call.Tool, count = p.add(call.Tool, count, p.applyText)
+		call.Tool, count = p.add(call.Tool, count, p.ApplyText)
 		if call.Input != nil {
-			updated, c := p.applyAny(call.Input, "")
+			updated, c := p.ApplyAny(call.Input, "")
 			call.Input = updated
 			count += c
 		}
 		if call.Output != nil {
-			call.Output.Text, count = p.add(call.Output.Text, count, p.applyText)
+			call.Output.Text, count = p.add(call.Output.Text, count, p.ApplyText)
 			for jdx, block := range call.Output.Content {
 				call.Output.Content[jdx], count = p.applyBlock(block, count)
 			}
 			if call.Output.Raw != nil {
-				updated, c := p.applyAny(call.Output.Raw, "")
+				updated, c := p.ApplyAny(call.Output.Raw, "")
 				call.Output.Raw = updated
 				count += c
 			}
 		}
-		call.Status, count = p.add(call.Status, count, p.applyText)
+		call.Status, count = p.add(call.Status, count, p.ApplyText)
 		turn.ToolCalls[idx] = call
 	}
 	return turn, count
 }
 
 func (p *Pipeline) applyBlock(block schema.ContentBlock, count int) (schema.ContentBlock, int) {
-	block.Text, count = p.add(block.Text, count, p.applyText)
-	block.URL, count = p.add(block.URL, count, p.applyURL)
-	block.Name, count = p.add(block.Name, count, p.applyText)
+	block.Text, count = p.add(block.Text, count, p.ApplyText)
+	block.URL, count = p.add(block.URL, count, p.ApplyURL)
+	block.Name, count = p.add(block.Name, count, p.ApplyText)
 	return block, count
 }
 
-func (p *Pipeline) applyAny(value any, key string) (any, int) {
+// ApplyAny walks any JSON-decoded value (map/slice/string/other) and applies
+// string-level redaction based on key heuristics. Maps and slices are rebuilt
+// bottom-up; string values are routed through ApplyPath/ApplyURL/ApplyCommand/ApplyText
+// according to the enclosing key's name.
+func (p *Pipeline) ApplyAny(value any, key string) (any, int) {
 	switch typed := value.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(typed))
 		count := 0
 		for childKey, childValue := range typed {
-			next, c := p.applyAny(childValue, childKey)
+			next, c := p.ApplyAny(childValue, childKey)
 			out[childKey] = next
 			count += c
 		}
@@ -154,40 +158,40 @@ func (p *Pipeline) applyAny(value any, key string) (any, int) {
 		out := make([]any, 0, len(typed))
 		count := 0
 		for _, item := range typed {
-			next, c := p.applyAny(item, key)
+			next, c := p.ApplyAny(item, key)
 			out = append(out, next)
 			count += c
 		}
 		return out, count
 	case string:
-		if looksLikePathKey(key) {
-			return p.applyPath(typed)
+		switch {
+		case LooksLikePathKey(key):
+			return p.ApplyPath(typed)
+		case LooksLikeURLKey(key):
+			return p.ApplyURL(typed)
+		case LooksLikeCommandKey(key):
+			return p.ApplyCommand(typed)
+		default:
+			return p.ApplyText(typed)
 		}
-		if looksLikeURLKey(key) {
-			return p.applyURL(typed)
-		}
-		if looksLikeCommandKey(key) {
-			return p.applyCommand(typed)
-		}
-		return p.applyText(typed)
 	default:
 		return value, 0
 	}
 }
 
-func (p *Pipeline) applyText(input string) (string, int) {
+func (p *Pipeline) ApplyText(input string) (string, int) {
 	return p.applyString(input, modeText)
 }
 
-func (p *Pipeline) applyPath(input string) (string, int) {
+func (p *Pipeline) ApplyPath(input string) (string, int) {
 	return p.applyString(input, modePath)
 }
 
-func (p *Pipeline) applyURL(input string) (string, int) {
+func (p *Pipeline) ApplyURL(input string) (string, int) {
 	return p.applyString(input, modeURL)
 }
 
-func (p *Pipeline) applyCommand(input string) (string, int) {
+func (p *Pipeline) ApplyCommand(input string) (string, int) {
 	return p.applyString(input, modeCommand)
 }
 
@@ -259,7 +263,7 @@ func CloneMap(input map[string]any) map[string]any {
 	return out
 }
 
-func looksLikePathKey(key string) bool {
+func LooksLikePathKey(key string) bool {
 	key = strings.ToLower(key)
 	for _, candidate := range []string{
 		"path", "cwd", "directory", "dir", "file", "filepath", "file_path",
@@ -272,12 +276,12 @@ func looksLikePathKey(key string) bool {
 	return false
 }
 
-func looksLikeURLKey(key string) bool {
+func LooksLikeURLKey(key string) bool {
 	key = strings.ToLower(key)
 	return strings.Contains(key, "url") || strings.Contains(key, "uri")
 }
 
-func looksLikeCommandKey(key string) bool {
+func LooksLikeCommandKey(key string) bool {
 	key = strings.ToLower(key)
 	return key == "command" || key == "cmd" || strings.Contains(key, "command")
 }
