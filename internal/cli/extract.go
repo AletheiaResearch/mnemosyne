@@ -65,10 +65,7 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 				return err
 			}
 
-			scope = strings.TrimSpace(firstNonEmpty(scope, cfg.OriginScope))
-			if scope == "" && includeAll {
-				scope = "all"
-			}
+			scope = resolveExtractScope(scope, cfg.OriginScope, includeAll)
 			if scope == "" {
 				return errors.New("extract requires --scope or a configured origin scope")
 			}
@@ -155,15 +152,17 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 			}
 
 			cfg.LastExtract = &config.LastExtract{
-				Timestamp:      time.Now().UTC().Format(time.RFC3339),
-				RecordCount:    summary.RecordCount,
-				SkippedRecords: summary.SkippedRecords,
-				RedactionCount: summary.RedactionCount,
-				InputTokens:    summary.InputTokens,
-				OutputTokens:   summary.OutputTokens,
-				Scope:          scope,
-				OutputPath:     output,
-				Warnings:       summary.Warnings,
+				Timestamp:           time.Now().UTC().Format(time.RFC3339),
+				RecordCount:         summary.RecordCount,
+				SkippedRecords:      summary.SkippedRecords,
+				RedactionCount:      summary.RedactionCount,
+				VerifiedSecretCount: summary.VerifiedSecretCount,
+				VerifiedSecrets:     summary.VerifiedSecrets,
+				InputTokens:         summary.InputTokens,
+				OutputTokens:        summary.OutputTokens,
+				Scope:               scope,
+				OutputPath:          output,
+				Warnings:            summary.Warnings,
 			}
 			cfg.ReviewerStatements = nil
 			cfg.VerificationRecord = nil
@@ -264,6 +263,20 @@ func updateBreakdown(rows map[string]breakdown, key string, record schema.Record
 	row.InputTokens += record.Usage.InputTokens
 	row.OutputTokens += record.Usage.OutputTokens
 	rows[key] = row
+}
+
+// resolveExtractScope picks the extract scope. An explicit --scope flag
+// wins; otherwise --include-all forces "all" (so a user with a narrow
+// origin_scope can still emit a full export); otherwise the persisted
+// origin_scope is used. Empty result means the caller should error.
+func resolveExtractScope(scopeFlag, originScope string, includeAll bool) string {
+	if trimmed := strings.TrimSpace(scopeFlag); trimmed != "" {
+		return trimmed
+	}
+	if includeAll {
+		return "all"
+	}
+	return strings.TrimSpace(originScope)
 }
 
 func firstNonEmpty(values ...string) string {

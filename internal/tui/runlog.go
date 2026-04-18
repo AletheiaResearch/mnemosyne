@@ -173,6 +173,13 @@ func (s *runlogScreen) renderExtract() string {
 	if e.RedactionCount > 0 {
 		rows = append(rows, common.KV("redactions", common.AccentStyle.Render(fmt.Sprintf("%d", e.RedactionCount)), 14))
 	}
+	if e.VerifiedSecretCount > 0 {
+		value := common.WarnStyle.Render(fmt.Sprintf("%d", e.VerifiedSecretCount))
+		if len(e.VerifiedSecrets) > 0 {
+			value += " " + common.MutedStyle.Render("("+strings.Join(e.VerifiedSecrets, ", ")+")")
+		}
+		rows = append(rows, common.KV("verified secrets", value, 14))
+	}
 	if e.InputTokens > 0 || e.OutputTokens > 0 {
 		rows = append(rows, common.KV("tokens", common.ValueStyle.Render(fmt.Sprintf("in %d · out %d", e.InputTokens, e.OutputTokens)), 14))
 	}
