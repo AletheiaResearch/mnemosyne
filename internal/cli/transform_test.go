@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -178,4 +179,144 @@ type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) {
 	return 0, errFailWrite
+}
+
+type chatMLPayload struct {
+	ID      string `json:"id"`
+	Model   string `json:"model"`
+	Content string `json:"content"`
+}
+
+func encodeRecordsJSONL(t *testing.T, records ...schema.Record) string {
+	t.Helper()
+	var buf bytes.Buffer
+	for _, record := range records {
+		data, err := json.Marshal(record)
+		if err != nil {
+			t.Fatalf("marshal record: %v", err)
+		}
+		buf.Write(data)
+		buf.WriteByte('\n')
+	}
+	return buf.String()
+}
+
+func TestTransformRecordsChatMLEndToEnd(t *testing.T) {
+	t.Parallel()
+
+	record := schema.Record{
+		RecordID: "rec-42",
+		Model:    "mock-model",
+		Turns: []schema.Turn{
+			{Role: "user", Text: "hello"},
+			{Role: "assistant", Text: "world"},
+		},
+	}
+	input := encodeRecordsJSONL(t, record)
+
+	tmpl, err := serialize.NewBuiltinTemplate("chatml", serialize.TemplateOptions{})
+	if err != nil {
+		t.Fatalf("NewBuiltinTemplate: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := transformRecords(bytes.NewBufferString(input), &out, tmpl); err != nil {
+		t.Fatalf("transformRecords: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("want 1 line, got %d: %q", len(lines), out.String())
+	}
+
+	var payload chatMLPayload
+	if err := json.Unmarshal([]byte(lines[0]), &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload.ID != record.RecordID || payload.Model != record.Model {
+		t.Errorf("payload header mismatch: %+v", payload)
+	}
+	if !strings.Contains(payload.Content, "<|im_start|>user\nhello<|im_end|>") {
+		t.Errorf("chatml content missing user block: %q", payload.Content)
+	}
+	if !strings.Contains(payload.Content, "<|im_start|>assistant\nworld<|im_end|>") {
+		t.Errorf("chatml content missing assistant block: %q", payload.Content)
+	}
+}
+
+func TestTransformRecordsMultipleRecords(t *testing.T) {
+	t.Parallel()
+
+	records := []schema.Record{
+		{RecordID: "rec-1", Model: "m", Turns: []schema.Turn{{Role: "user", Text: "a"}}},
+		{RecordID: "rec-2", Model: "m", Turns: []schema.Turn{{Role: "user", Text: "b"}}},
+		{RecordID: "rec-3", Model: "m", Turns: []schema.Turn{{Role: "user", Text: "c"}}},
+	}
+	input := encodeRecordsJSONL(t, records...)
+
+	tmpl, err := serialize.NewBuiltinTemplate("chatml", serialize.TemplateOptions{})
+	if err != nil {
+		t.Fatalf("NewBuiltinTemplate: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := transformRecords(bytes.NewBufferString(input), &out, tmpl); err != nil {
+		t.Fatalf("transformRecords: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) != len(records) {
+		t.Fatalf("want %d lines, got %d", len(records), len(lines))
+	}
+	for i, line := range lines {
+		var payload chatMLPayload
+		if err := json.Unmarshal([]byte(line), &payload); err != nil {
+			t.Fatalf("line %d unmarshal: %v", i, err)
+		}
+		if payload.ID != records[i].RecordID {
+			t.Errorf("line %d ID = %q, want %q", i, payload.ID, records[i].RecordID)
+		}
+	}
+}
+
+func TestTransformRecordsInvalidJSON(t *testing.T) {
+	t.Parallel()
+
+	input := bytes.NewBufferString("{not valid json}\n")
+	var out bytes.Buffer
+	err := transformRecords(input, &out, serialize.Canonical{})
+	if err == nil {
+		t.Fatal("expected json parse error")
+	}
+	var syntaxErr *json.SyntaxError
+	if !errors.As(err, &syntaxErr) {
+		t.Errorf("want *json.SyntaxError, got %T: %v", err, err)
+	}
+}
+
+func TestTransformRecordsVicunaAlternationError(t *testing.T) {
+	t.Parallel()
+
+	record := schema.Record{
+		RecordID: "rec-bad",
+		Turns: []schema.Turn{
+			{Role: "user", Text: "one"},
+			{Role: "user", Text: "two"},
+		},
+	}
+	input := encodeRecordsJSONL(t, record)
+
+	tmpl, err := serialize.NewBuiltinTemplate("vicuna", serialize.TemplateOptions{})
+	if err != nil {
+		t.Fatalf("NewBuiltinTemplate: %v", err)
+	}
+
+	var out bytes.Buffer
+	err = transformRecords(bytes.NewBufferString(input), &out, tmpl)
+	if err == nil {
+		t.Fatal("expected vicuna alternation error")
+	}
+	if !strings.Contains(err.Error(), "alternate") {
+		t.Errorf("error %q does not mention alternation", err)
+	}
 }

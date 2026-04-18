@@ -186,3 +186,135 @@ func TestTemplateDescriptionFromComment(t *testing.T) {
 		t.Errorf("expected description to mention ChatML, got %q", desc)
 	}
 }
+
+func TestBuildTemplateMessagesFlags(t *testing.T) {
+	record := sampleRecord([]schema.Turn{
+		{Role: "user", Text: "first"},
+		{Role: "assistant", Text: "second", Reasoning: "thinking..."},
+		{Role: "user", Text: "third"},
+	})
+
+	msgs := buildTemplateMessages(record)
+	if len(msgs) != len(record.Turns) {
+		t.Fatalf("got %d messages, want %d", len(msgs), len(record.Turns))
+	}
+	for i, msg := range msgs {
+		if msg.Index != i {
+			t.Errorf("msg[%d].Index = %d, want %d", i, msg.Index, i)
+		}
+		wantLast := i == len(msgs)-1
+		if msg.IsLast != wantLast {
+			t.Errorf("msg[%d].IsLast = %v, want %v", i, msg.IsLast, wantLast)
+		}
+	}
+	if msgs[1].Reasoning != "thinking..." {
+		t.Errorf("Reasoning = %q, want propagation of turn.Reasoning", msgs[1].Reasoning)
+	}
+	if msgs[0].Reasoning != "" {
+		t.Errorf("msg[0].Reasoning = %q, want empty", msgs[0].Reasoning)
+	}
+}
+
+func TestBuildTemplateMessagesEmpty(t *testing.T) {
+	msgs := buildTemplateMessages(sampleRecord(nil))
+	if len(msgs) != 0 {
+		t.Errorf("want empty slice, got %d entries", len(msgs))
+	}
+}
+
+func TestTemplateFromInlineSource(t *testing.T) {
+	source := `{{range .Messages}}{{.Index}}:{{.Role}}={{.Content}}{{if .IsLast}}!{{end}}
+{{end -}}`
+	tmpl, err := newTemplate("inline", source, TemplateOptions{})
+	if err != nil {
+		t.Fatalf("newTemplate: %v", err)
+	}
+	out, err := tmpl.Serialize(sampleRecord([]schema.Turn{
+		{Role: "user", Text: "hi"},
+		{Role: "assistant", Text: "yo"},
+	}))
+	if err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+	payload := out.(struct {
+		ID      string `json:"id"`
+		Model   string `json:"model"`
+		Content string `json:"content"`
+	})
+	want := "0:user=hi\n1:assistant=yo!\n"
+	if payload.Content != want {
+		t.Errorf("inline template mismatch\ngot:  %q\nwant: %q", payload.Content, want)
+	}
+}
+
+func TestTemplateRecordAccessible(t *testing.T) {
+	source := `model={{.Record.Model}};id={{.Record.RecordID}};bos={{.BOSToken}};eos={{.EOSToken}}`
+	tmpl, err := newTemplate("inline-record", source, TemplateOptions{
+		BOSToken: "<s>",
+		EOSToken: "</s>",
+	})
+	if err != nil {
+		t.Fatalf("newTemplate: %v", err)
+	}
+	out, err := tmpl.Serialize(sampleRecord([]schema.Turn{{Role: "user", Text: "x"}}))
+	if err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+	payload := out.(struct {
+		ID      string `json:"id"`
+		Model   string `json:"model"`
+		Content string `json:"content"`
+	})
+	want := "model=test-model;id=rec-1;bos=<s>;eos=</s>"
+	if payload.Content != want {
+		t.Errorf("content mismatch\ngot:  %q\nwant: %q", payload.Content, want)
+	}
+}
+
+func TestTemplateBuiltinRendersEmptyMessages(t *testing.T) {
+	cases := []struct {
+		name string
+		opts TemplateOptions
+	}{
+		{"chatml", TemplateOptions{}},
+		{"zephyr", TemplateOptions{EOSToken: "</s>"}},
+		{"vicuna", TemplateOptions{BOSToken: "<s>", EOSToken: "</s>"}},
+	}
+	empty := sampleRecord(nil)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpl, err := NewBuiltinTemplate(tc.name, tc.opts)
+			if err != nil {
+				t.Fatalf("NewBuiltinTemplate(%q): %v", tc.name, err)
+			}
+			if _, err := tmpl.Serialize(empty); err != nil {
+				t.Fatalf("Serialize empty record: %v", err)
+			}
+		})
+	}
+}
+
+func TestNewTemplateParseError(t *testing.T) {
+	_, err := newTemplate("broken", "{{ .Messages", TemplateOptions{})
+	if err == nil {
+		t.Fatal("expected parse error for unterminated action")
+	}
+	if !strings.Contains(err.Error(), "broken") {
+		t.Errorf("error should mention template name, got %q", err)
+	}
+}
+
+func TestTemplateRaiseExceptionPropagates(t *testing.T) {
+	source := `{{raiseException "boom"}}`
+	tmpl, err := newTemplate("inline-raise", source, TemplateOptions{})
+	if err != nil {
+		t.Fatalf("newTemplate: %v", err)
+	}
+	_, err = tmpl.Serialize(sampleRecord(nil))
+	if err == nil {
+		t.Fatal("expected error from raiseException")
+	}
+	if !strings.Contains(err.Error(), "boom") {
+		t.Errorf("error %q missing raise message", err)
+	}
+}
