@@ -52,6 +52,7 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 	var scope string
 	var includeAll bool
 	var suppressReasoning bool
+	var verifySecrets bool
 
 	cmd := &cobra.Command{
 		Use:   "extract",
@@ -101,7 +102,7 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 			}
 			defer file.Close()
 
-			pipeline, err := redact.FromConfig(cfg)
+			pipeline, err := redact.FromConfigWithOptions(cfg, redact.Options{VerifySecrets: verifySecrets})
 			if err != nil {
 				return err
 			}
@@ -177,6 +178,7 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 	cmd.Flags().StringVar(&scope, "scope", "", "source scope to extract, or 'all' (defaults to 'all' when --include-all is set)")
 	cmd.Flags().BoolVar(&includeAll, "include-all", false, "ignore grouping exclusions and default scope to 'all'")
 	cmd.Flags().BoolVar(&suppressReasoning, "no-reasoning", false, "omit reasoning traces from assistant turns")
+	cmd.Flags().BoolVar(&verifySecrets, "verify-secrets", false, "live-verify matched provider secrets against their issuing API (network access required)")
 	return cmd
 }
 
