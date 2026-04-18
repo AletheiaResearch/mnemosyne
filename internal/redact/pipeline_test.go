@@ -150,8 +150,8 @@ func TestPipelineRedactsWithVerification(t *testing.T) {
 		t.Fatalf("expected ApplyRecord to surface 2 verified secrets (personal+project), got %d (%v)",
 			applyStats.VerifiedSecretCount, applyStats.VerifiedSecrets)
 	}
-	if !containsWith(applyStats.VerifiedSecrets, "PostHogPersonalAPIKey") ||
-		!containsWith(applyStats.VerifiedSecrets, "PostHogProjectAPIKey") {
+	if !containsWith(applyStats.VerifiedLabels(), "PostHogPersonalAPIKey") ||
+		!containsWith(applyStats.VerifiedLabels(), "PostHogProjectAPIKey") {
 		t.Fatalf("ApplyRecord verified secrets should list personal+project detectors, got %v",
 			applyStats.VerifiedSecrets)
 	}
@@ -291,9 +291,104 @@ func TestApplyRecordSurfacesVerifiedSecrets(t *testing.T) {
 		t.Fatalf("expected 1 verified secret, got %d (%v)",
 			stats.VerifiedSecretCount, stats.VerifiedSecrets)
 	}
-	if !containsWith(stats.VerifiedSecrets, "PostHogPersonalAPIKey") {
+	if !containsWith(stats.VerifiedLabels(), "PostHogPersonalAPIKey") {
 		t.Fatalf("verified secret should carry the detector label, got %v",
-			stats.VerifiedSecrets)
+			stats.VerifiedLabels())
+	}
+}
+
+// TestApplyRecordVerifiesSecretInBearerHeader guards against a regression
+// where the regex pass ran before trufflehog and stripped phx_... /
+// phc_... keys inside bearer/api_key/env-assign shapes, leaving nothing
+// for the verifier to confirm. Trufflehog must see the raw secret, so
+// ApplyRecord should still surface a verified match even when the key
+// lives in the exact shapes regex.go otherwise handles.
+func TestApplyRecordVerifiesSecretInBearerHeader(t *testing.T) {
+	t.Parallel()
+
+	personal := fakeKey(phxPrefix, personalBody)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/users/@me/" && r.Header.Get("Authorization") == "Bearer "+personal {
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `{"email":"ok@example.com"}`)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+
+	pipeline, err := New(Options{
+		Detectors:     posthogScanners(ts.URL),
+		VerifySecrets: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	record := schema.Record{
+		Turns: []schema.Turn{{Text: "Authorization: Bearer " + personal}},
+	}
+	redacted, stats := pipeline.ApplyRecord(record)
+	if strings.Contains(redacted.Turns[0].Text, personal) {
+		t.Fatalf("expected key to be redacted, got %q", redacted.Turns[0].Text)
+	}
+	if stats.VerifiedSecretCount != 1 {
+		t.Fatalf("expected bearer-header phx_ key to verify, got %d (%v)",
+			stats.VerifiedSecretCount, stats.VerifiedLabels())
+	}
+	if !containsWith(stats.VerifiedLabels(), "PostHogPersonalAPIKey") {
+		t.Fatalf("expected PostHogPersonalAPIKey label, got %v", stats.VerifiedLabels())
+	}
+}
+
+// TestApplyRecordVerifiedSecretsFingerprintDistinctKeys guards against
+// the bug where two distinct verified keys collapse into one because
+// dedup was keyed on the display label ("PostHogPersonalAPIKey:phx_****"
+// — identical for every phx_ match). Each verified key must carry its
+// own fingerprint so downstream aggregators can count them separately.
+func TestApplyRecordVerifiedSecretsFingerprintDistinctKeys(t *testing.T) {
+	t.Parallel()
+
+	altBody := "zyxwvutsrqponmlkjihgfedcba9876543210"
+	personalA := fakeKey(phxPrefix, personalBody)
+	personalB := fakeKey(phxPrefix, altBody)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/users/@me/" {
+			auth := r.Header.Get("Authorization")
+			if auth == "Bearer "+personalA || auth == "Bearer "+personalB {
+				w.WriteHeader(http.StatusOK)
+				_, _ = io.WriteString(w, `{"email":"ok@example.com"}`)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+
+	pipeline, err := New(Options{
+		Detectors:     posthogScanners(ts.URL),
+		VerifySecrets: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	record := schema.Record{
+		Turns: []schema.Turn{{Text: "a=" + personalA + " b=" + personalB}},
+	}
+	_, stats := pipeline.ApplyRecord(record)
+	if stats.VerifiedSecretCount != 2 {
+		t.Fatalf("expected 2 distinct verified secrets, got %d (%v)",
+			stats.VerifiedSecretCount, stats.VerifiedLabels())
+	}
+	if len(stats.VerifiedSecrets) != 2 {
+		t.Fatalf("expected 2 entries in VerifiedSecrets, got %d (%v)",
+			len(stats.VerifiedSecrets), stats.VerifiedSecrets)
+	}
+	if stats.VerifiedSecrets[0].Fingerprint == stats.VerifiedSecrets[1].Fingerprint {
+		t.Fatalf("distinct keys must yield distinct fingerprints, got %q twice",
+			stats.VerifiedSecrets[0].Fingerprint)
 	}
 }
 

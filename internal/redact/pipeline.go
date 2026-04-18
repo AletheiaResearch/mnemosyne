@@ -1,6 +1,8 @@
 package redact
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"maps"
 	"slices"
@@ -16,22 +18,46 @@ import (
 
 const PlaceholderMarker = "[MNEMOSYNE_REDACTED]"
 
+// VerifiedSecret pairs a display label with a stable fingerprint of the
+// underlying raw secret. The fingerprint lets cross-record aggregators
+// (extract) dedup on identity without leaking raw secret values outside
+// the redact package.
+type VerifiedSecret struct {
+	Label       string
+	Fingerprint string
+}
+
 // ApplyStats is the accumulator ApplyRecord returns. Redactions counts
-// every substitution performed; VerifiedSecrets holds labels for secrets
-// the pipeline confirmed live against a provider verifier (capped).
+// every substitution performed; VerifiedSecrets lists each unique secret
+// the pipeline confirmed live against a provider verifier, capped at 20.
 type ApplyStats struct {
 	Redactions          int
 	VerifiedSecretCount int
-	VerifiedSecrets     []string
+	VerifiedSecrets     []VerifiedSecret
 
 	// seenVerified dedups raw verified values while walking the record.
 	// Unexported because callers shouldn't need the raw secret — only the
-	// count and labels are surfaced via VerifiedSecret* fields.
+	// count and fingerprinted labels are surfaced via VerifiedSecret*.
 	seenVerified map[string]struct{}
 }
 
-// recordVerified appends a label for a verified secret once per raw
-// value. Returns true when the label was newly added.
+// VerifiedLabels returns just the display labels from VerifiedSecrets.
+// Convenience for callers (and tests) that don't care about the
+// fingerprints.
+func (s *ApplyStats) VerifiedLabels() []string {
+	if s == nil {
+		return nil
+	}
+	out := make([]string, len(s.VerifiedSecrets))
+	for i, v := range s.VerifiedSecrets {
+		out[i] = v.Label
+	}
+	return out
+}
+
+// recordVerified appends a (label, fingerprint) pair for a verified
+// secret once per raw value. Returns true when the secret was newly
+// added.
 func (s *ApplyStats) recordVerified(raw, label string) bool {
 	if s == nil || raw == "" {
 		return false
@@ -45,7 +71,11 @@ func (s *ApplyStats) recordVerified(raw, label string) bool {
 	s.seenVerified[raw] = struct{}{}
 	s.VerifiedSecretCount++
 	if len(s.VerifiedSecrets) < 20 {
-		s.VerifiedSecrets = append(s.VerifiedSecrets, label)
+		sum := sha256.Sum256([]byte(raw))
+		s.VerifiedSecrets = append(s.VerifiedSecrets, VerifiedSecret{
+			Label:       label,
+			Fingerprint: hex.EncodeToString(sum[:]),
+		})
 	}
 	return true
 }
@@ -261,9 +291,13 @@ func (p *Pipeline) applyString(input string, mode applyMode, stats *ApplyStats) 
 		return input
 	}
 
-	out, count := p.detector.Redact(input)
-	out, trufflehogCount := p.trufflehog.Redact(out, stats)
-	count += trufflehogCount
+	// Trufflehog runs before the regex detector so provider-prefixed
+	// secrets inside bearer headers / api_key= / env-assign shapes are
+	// still intact when a verifier inspects them; the regex pass would
+	// otherwise have already replaced them with PlaceholderMarker.
+	out, count := p.trufflehog.Redact(input, stats)
+	out, detectorCount := p.detector.Redact(out)
+	count += detectorCount
 	out, literalCount := applyLiterals(out, p.literals)
 	count += literalCount
 

@@ -119,7 +119,7 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 				Warnings:    make([]string, 0),
 			}
 			seenRecordIDs := make(map[string]struct{})
-			seenVerifiedLabels := make(map[string]struct{})
+			seenVerifiedFingerprints := make(map[string]struct{})
 			seenWarnings := make(map[string]struct{})
 			var warnMu sync.Mutex
 			addWarning := func(message string) {
@@ -137,15 +137,15 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 			}
 
 			if err := runExtraction(cmd.Context(), runExtractionArgs{
-				rt:                 rt,
-				selections:         selections,
-				pipeline:           pipeline,
-				suppressReasoning:  suppressReasoning,
-				writer:             writer,
-				summary:            &summary,
-				seenRecordIDs:      seenRecordIDs,
-				seenVerifiedLabels: seenVerifiedLabels,
-				addWarning:         addWarning,
+				rt:                       rt,
+				selections:               selections,
+				pipeline:                 pipeline,
+				suppressReasoning:        suppressReasoning,
+				writer:                   writer,
+				summary:                  &summary,
+				seenRecordIDs:            seenRecordIDs,
+				seenVerifiedFingerprints: seenVerifiedFingerprints,
+				addWarning:               addWarning,
 			}); err != nil {
 				return err
 			}
@@ -283,22 +283,22 @@ func sourcePriority(name string) int {
 }
 
 type runExtractionArgs struct {
-	rt                 *runtime
-	selections         []sourceSelection
-	pipeline           *redact.Pipeline
-	suppressReasoning  bool
-	writer             *bufio.Writer
-	summary            *extractSummary
-	seenRecordIDs      map[string]struct{}
-	seenVerifiedLabels map[string]struct{}
-	addWarning         func(string)
+	rt                       *runtime
+	selections               []sourceSelection
+	pipeline                 *redact.Pipeline
+	suppressReasoning        bool
+	writer                   *bufio.Writer
+	summary                  *extractSummary
+	seenRecordIDs            map[string]struct{}
+	seenVerifiedFingerprints map[string]struct{}
+	addWarning               func(string)
 }
 
 type emitted struct {
 	record          schema.Record
 	data            []byte
 	redactions      int
-	verifiedSecrets []string
+	verifiedSecrets []redact.VerifiedSecret
 	invalid         bool
 }
 
@@ -413,14 +413,14 @@ func extractBucket(
 		}
 		args.summary.RecordCount++
 		args.summary.RedactionCount += rec.redactions
-		for _, label := range rec.verifiedSecrets {
-			if _, dup := args.seenVerifiedLabels[label]; dup {
+		for _, vs := range rec.verifiedSecrets {
+			if _, dup := args.seenVerifiedFingerprints[vs.Fingerprint]; dup {
 				continue
 			}
-			args.seenVerifiedLabels[label] = struct{}{}
+			args.seenVerifiedFingerprints[vs.Fingerprint] = struct{}{}
 			args.summary.VerifiedSecretCount++
 			if len(args.summary.VerifiedSecrets) < 20 {
-				args.summary.VerifiedSecrets = append(args.summary.VerifiedSecrets, label)
+				args.summary.VerifiedSecrets = append(args.summary.VerifiedSecrets, vs.Label)
 			}
 		}
 		args.summary.InputTokens += rec.record.Usage.InputTokens
