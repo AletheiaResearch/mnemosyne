@@ -210,6 +210,37 @@ func TestPipelineVerifyReportsUnverifiedKeysAsTokens(t *testing.T) {
 	}
 }
 
+// TestScanRecordDedupsTokensAcrossRegexAndTrufflehog guards against the
+// prior bug where a PostHog key in a bearer header was counted once by
+// the regex bearer pattern and then a second time by the trufflehog
+// detector. Both engines now share Findings.seenTokens so the same raw
+// token is only credited once to TokenCount.
+func TestScanRecordDedupsTokensAcrossRegexAndTrufflehog(t *testing.T) {
+	t.Parallel()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	pipeline, err := New(Options{
+		Detectors:     posthogScanners(ts.URL),
+		VerifySecrets: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	personal := fakeKey(phxPrefix, personalBody)
+	findings := pipeline.ScanRecord(schema.Record{
+		Turns: []schema.Turn{{Text: "Authorization: Bearer " + personal}},
+	})
+	if findings.TokenCount != 1 {
+		t.Fatalf("expected TokenCount=1 (regex+trufflehog dedup), got %d: %+v",
+			findings.TokenCount, findings)
+	}
+}
+
 // posthogScanners builds the PostHog scanner set pointed at a single
 // httptest URL. Tests use this to exercise the pipeline without
 // depending on the init-time registry (so the upstream default

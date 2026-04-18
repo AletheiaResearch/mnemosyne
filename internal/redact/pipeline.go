@@ -125,7 +125,8 @@ func (p *Pipeline) ScanRecord(record schema.Record) Findings {
 		builder.WriteString(turn.Reasoning)
 		builder.WriteRune('\n')
 	}
-	findings := p.detector.Scan(builder.String())
+	findings := Findings{}
+	p.detector.ScanInto(builder.String(), &findings)
 	p.trufflehog.Scan(builder.String(), &findings)
 	return findings
 }

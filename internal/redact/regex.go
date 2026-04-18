@@ -27,6 +27,28 @@ type Findings struct {
 	Tokens              []string  `json:"tokens,omitempty"`
 	VerifiedSecrets     []string  `json:"verified_secrets,omitempty"`
 	HighEntropy         []Finding `json:"high_entropy,omitempty"`
+
+	// seenTokens tracks raw token values already counted, so regex and
+	// trufflehog passes sharing one Findings don't double-count the same
+	// secret. Unexported so it never ends up in JSON output and never
+	// survives a marshal/unmarshal round-trip.
+	seenTokens map[string]struct{}
+}
+
+// markToken returns true the first time a raw token value is recorded.
+// Callers must gate TokenCount/Tokens updates on the return value.
+func (f *Findings) markToken(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	if f.seenTokens == nil {
+		f.seenTokens = make(map[string]struct{})
+	}
+	if _, dup := f.seenTokens[raw]; dup {
+		return false
+	}
+	f.seenTokens[raw] = struct{}{}
+	return true
 }
 
 type Finding struct {
@@ -72,6 +94,17 @@ func (d *Detector) Redact(input string) (string, int) {
 
 func (d *Detector) Scan(input string) Findings {
 	findings := Findings{}
+	d.ScanInto(input, &findings)
+	return findings
+}
+
+// ScanInto folds regex hits into the caller-supplied Findings so a later
+// trufflehog pass can share the same seenTokens dedup set and avoid
+// double-counting keys matched by both engines.
+func (d *Detector) ScanInto(input string, findings *Findings) {
+	if findings == nil {
+		return
+	}
 	for _, pattern := range d.patterns {
 		matches := pattern.regex.FindAllStringSubmatch(input, -1)
 		for _, match := range matches {
@@ -91,6 +124,9 @@ func (d *Detector) Scan(input string) Findings {
 					findings.PublicIPs = append(findings.PublicIPs, value)
 				}
 			default:
+				if !findings.markToken(value) {
+					continue
+				}
 				findings.TokenCount++
 				if len(findings.Tokens) < 20 {
 					findings.Tokens = append(findings.Tokens, value)
@@ -98,8 +134,7 @@ func (d *Detector) Scan(input string) Findings {
 			}
 		}
 	}
-	findings.HighEntropy = ScanEntropy(input, 15)
-	return findings
+	findings.HighEntropy = append(findings.HighEntropy, ScanEntropy(input, 15)...)
 }
 
 func (f Findings) Empty() bool {

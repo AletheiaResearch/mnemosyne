@@ -97,7 +97,6 @@ func (r *trufflehogRunner) Scan(input string, findings *Findings) {
 	ctx, cancel := r.context()
 	defer cancel()
 
-	seenToken := make(map[string]struct{})
 	seenVerified := make(map[string]struct{})
 	for _, m := range matches {
 		for _, chunk := range m.Matches() {
@@ -110,8 +109,7 @@ func (r *trufflehogRunner) Scan(input string, findings *Findings) {
 				if raw == "" {
 					continue
 				}
-				if _, dup := seenToken[raw]; !dup {
-					seenToken[raw] = struct{}{}
+				if findings.markToken(raw) {
 					findings.TokenCount++
 					if len(findings.Tokens) < 20 {
 						findings.Tokens = append(findings.Tokens, findingLabel(result))
