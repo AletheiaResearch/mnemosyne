@@ -18,6 +18,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/AletheiaResearch/mnemosyne/internal/config"
+	"github.com/AletheiaResearch/mnemosyne/internal/nativeexport"
 	"github.com/AletheiaResearch/mnemosyne/internal/redact"
 	"github.com/AletheiaResearch/mnemosyne/internal/schema"
 	"github.com/AletheiaResearch/mnemosyne/internal/source"
@@ -52,6 +53,8 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 	var scope string
 	var includeAll bool
 	var suppressReasoning bool
+	var isolate bool
+	var attachImages bool
 
 	cmd := &cobra.Command{
 		Use:   "extract",
@@ -60,6 +63,13 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 			cfg, err := loadConfig(rt.configPath)
 			if err != nil {
 				return err
+			}
+
+			if !cmd.Flags().Changed("isolate") && cfg.IsolateExport {
+				isolate = true
+			}
+			if !cmd.Flags().Changed("attach-images") && cfg.AttachImages {
+				attachImages = true
 			}
 
 			scope = strings.TrimSpace(firstNonEmpty(scope, cfg.OriginScope))
@@ -132,6 +142,18 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 				summary.Warnings = append(summary.Warnings, message)
 			}
 
+			var stagingDir string
+			var redactionKey string
+			var isolateSessions []config.IsolateSession
+			var isolateMu sync.Mutex
+			if isolate {
+				stagingDir = filepath.Join(filepath.Dir(output), "isolate")
+				if err := os.MkdirAll(stagingDir, 0o755); err != nil {
+					return err
+				}
+				redactionKey = redact.RedactionKey(cfg, attachImages)
+			}
+
 			if err := runExtraction(cmd.Context(), runExtractionArgs{
 				rt:                rt,
 				selections:        selections,
@@ -141,6 +163,14 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 				summary:           &summary,
 				seenRecordIDs:     seenRecordIDs,
 				addWarning:        addWarning,
+				isolate:           isolate,
+				attachImages:      attachImages,
+				stagingDir:        stagingDir,
+				redactionKey:      redactionKey,
+				isolateSessions:   &isolateSessions,
+				isolateMu:         &isolateMu,
+				isolateSeenSrc:    make(map[string]struct{}),
+				isolateSkipWarned: make(map[string]struct{}),
 			}); err != nil {
 				return err
 			}
@@ -149,7 +179,7 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 				return err
 			}
 
-			cfg.LastExtract = &config.LastExtract{
+			lastExtract := &config.LastExtract{
 				Timestamp:      time.Now().UTC().Format(time.RFC3339),
 				RecordCount:    summary.RecordCount,
 				SkippedRecords: summary.SkippedRecords,
@@ -160,6 +190,16 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 				OutputPath:     output,
 				Warnings:       summary.Warnings,
 			}
+			if isolate {
+				lastExtract.IsolateStagingDir = stagingDir
+				sort.SliceStable(isolateSessions, func(i, j int) bool {
+					return isolateSessions[i].File < isolateSessions[j].File
+				})
+				lastExtract.IsolateSessions = isolateSessions
+			}
+			cfg.LastExtract = lastExtract
+			cfg.IsolateExport = isolate
+			cfg.AttachImages = attachImages
 			cfg.ReviewerStatements = nil
 			cfg.VerificationRecord = nil
 			cfg.LastAttest = nil
@@ -177,6 +217,8 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 	cmd.Flags().StringVar(&scope, "scope", "", "source scope to extract, or 'all' (defaults to 'all' when --include-all is set)")
 	cmd.Flags().BoolVar(&includeAll, "include-all", false, "ignore grouping exclusions and default scope to 'all'")
 	cmd.Flags().BoolVar(&suppressReasoning, "no-reasoning", false, "omit reasoning traces from assistant turns")
+	cmd.Flags().BoolVar(&isolate, "isolate", false, "also emit redacted copies of each native session file into <output>/isolate/<format>/")
+	cmd.Flags().BoolVar(&attachImages, "attach-images", false, "keep inline image attachments in isolate-mode output (has no effect without --isolate)")
 	return cmd
 }
 
@@ -285,6 +327,80 @@ type runExtractionArgs struct {
 	summary           *extractSummary
 	seenRecordIDs     map[string]struct{}
 	addWarning        func(string)
+
+	isolate           bool
+	attachImages      bool
+	stagingDir        string
+	redactionKey      string
+	isolateSessions   *[]config.IsolateSession
+	isolateMu         *sync.Mutex
+	isolateSeenSrc    map[string]struct{}
+	isolateSkipWarned map[string]struct{}
+}
+
+// recordIsolate runs the native-format redactor for a single record and
+// appends the result to the isolate-session list. origin and src must be
+// captured before ApplyRecord runs, because the path anonymizer rewrites
+// record.Provenance.SourcePath in place (Provenance is a pointer inside
+// the Record value). Returns nil when the origin has no native handler
+// (caller warns once per origin) or when the same source file has already
+// been redacted in this run.
+func (a *runExtractionArgs) recordIsolate(ctx context.Context, origin, src string) error {
+	if !a.isolate {
+		return nil
+	}
+	redactor, ok := nativeexport.ForOrigin(origin)
+	if !ok {
+		a.isolateMu.Lock()
+		_, warned := a.isolateSkipWarned[origin]
+		if !warned {
+			a.isolateSkipWarned[origin] = struct{}{}
+		}
+		a.isolateMu.Unlock()
+		if !warned && origin != "" {
+			a.addWarning(fmt.Sprintf("isolate mode: skipping %s (native format not supported yet)", origin))
+		}
+		return nil
+	}
+	if src == "" {
+		a.addWarning(fmt.Sprintf("isolate mode: %s record missing source path; skipping native export", origin))
+		return nil
+	}
+	a.isolateMu.Lock()
+	if _, seen := a.isolateSeenSrc[src]; seen {
+		a.isolateMu.Unlock()
+		return nil
+	}
+	a.isolateSeenSrc[src] = struct{}{}
+	a.isolateMu.Unlock()
+
+	fileBase := filepath.Base(src)
+	format := redactor.Format()
+	dst := filepath.Join(a.stagingDir, format, fileBase)
+	result, err := redactor.Redact(ctx, src, dst, nativeexport.Options{
+		Pipeline:     a.pipeline,
+		AttachImages: a.attachImages,
+		RedactionKey: a.redactionKey,
+	})
+	if err != nil {
+		a.addWarning(fmt.Sprintf("isolate redaction failed for %s: %v", src, err))
+		return nil
+	}
+	session := config.IsolateSession{
+		File:         format + "/" + fileBase,
+		Format:       format,
+		SourcePath:   src,
+		StagingPath:  result.StagingPath,
+		SourceHash:   result.SourceHash,
+		RedactionKey: result.RedactionKey,
+		RedactedHash: result.RedactedHash,
+		Lines:        result.Lines,
+		AttachImages: result.AttachImages,
+	}
+	a.isolateMu.Lock()
+	*a.isolateSessions = append(*a.isolateSessions, session)
+	a.isolateMu.Unlock()
+	return nil
 }
 
 type emitted struct {
@@ -353,6 +469,14 @@ func extractBucket(
 							record.Turns[idx].Reasoning = ""
 						}
 					}
+					// Capture the source path before ApplyRecord's path
+					// anonymizer rewrites it (Provenance is a pointer, so
+					// ApplyRecord mutates the shared struct).
+					isolateOrigin := record.Origin
+					isolateSrc := ""
+					if record.Provenance != nil {
+						isolateSrc = record.Provenance.SourcePath
+					}
 					redacted, count := args.pipeline.ApplyRecord(record)
 
 					rec := emitted{record: redacted, redactions: count}
@@ -365,6 +489,9 @@ func extractBucket(
 							return err
 						}
 						rec.data = data
+						if err := args.recordIsolate(ctx, isolateOrigin, isolateSrc); err != nil {
+							return err
+						}
 					}
 
 					select {
