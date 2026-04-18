@@ -318,3 +318,185 @@ func TestTemplateRaiseExceptionPropagates(t *testing.T) {
 		t.Errorf("error %q missing raise message", err)
 	}
 }
+
+func TestJinjaInlineTemplate(t *testing.T) {
+	source := `{% for m in messages %}[{{m.role}}] {{m.content}}{% if not loop.last %}
+{% endif %}{% endfor %}`
+	tmpl, err := newJinjaTemplate("inline.jinja", source, TemplateOptions{})
+	if err != nil {
+		t.Fatalf("newJinjaTemplate: %v", err)
+	}
+	if tmpl.Engine() != "jinja" {
+		t.Errorf("Engine() = %q, want jinja", tmpl.Engine())
+	}
+	out, err := tmpl.Serialize(sampleRecord([]schema.Turn{
+		{Role: "user", Text: "hi"},
+		{Role: "assistant", Text: "yo"},
+	}))
+	if err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+	payload := out.(struct {
+		ID      string `json:"id"`
+		Model   string `json:"model"`
+		Content string `json:"content"`
+	})
+	want := "[user] hi\n[assistant] yo"
+	if payload.Content != want {
+		t.Errorf("jinja inline mismatch\ngot:  %q\nwant: %q", payload.Content, want)
+	}
+}
+
+func TestJinjaSurfacesToolCallsAndToolRole(t *testing.T) {
+	source := `{% for m in messages %}{{m.role}}{% if m.tool_calls is defined %}(calls={{m.tool_calls[0].function.name}}){% endif %}{% if m.content %}:{{m.content}}{% endif %}
+{% endfor %}`
+	tmpl, err := newJinjaTemplate("inline-tools.jinja", source, TemplateOptions{})
+	if err != nil {
+		t.Fatalf("newJinjaTemplate: %v", err)
+	}
+	record := schema.Record{
+		RecordID: "rec-1",
+		Turns: []schema.Turn{
+			{Role: "user", Text: "go"},
+			{Role: "assistant", ToolCalls: []schema.ToolCall{{
+				Tool:   "search",
+				Input:  map[string]any{"q": "paris"},
+				Output: &schema.ToolOutput{Text: "ok"},
+			}}},
+			{Role: "assistant", Text: "done"},
+		},
+	}
+	out, err := tmpl.Serialize(record)
+	if err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+	payload := out.(struct {
+		ID      string `json:"id"`
+		Model   string `json:"model"`
+		Content string `json:"content"`
+	})
+	if !strings.Contains(payload.Content, "assistant(calls=search)") {
+		t.Errorf("missing tool_calls projection: %q", payload.Content)
+	}
+	if !strings.Contains(payload.Content, "tool") || !strings.Contains(payload.Content, ":ok") {
+		t.Errorf("missing tool role message with output: %q", payload.Content)
+	}
+}
+
+func TestToolOutputSplitsIntoToolMessage(t *testing.T) {
+	record := schema.Record{
+		Turns: []schema.Turn{
+			{Role: "assistant", ToolCalls: []schema.ToolCall{{
+				Tool:   "search",
+				Output: &schema.ToolOutput{Text: "answer"},
+			}}},
+		},
+	}
+	msgs := buildTemplateMessages(record)
+	if len(msgs) != 2 {
+		t.Fatalf("want 2 messages (assistant + tool), got %d", len(msgs))
+	}
+	if msgs[0].Role != "assistant" || len(msgs[0].ToolCalls) != 1 {
+		t.Errorf("assistant message missing tool_calls: %+v", msgs[0])
+	}
+	if msgs[1].Role != "tool" || msgs[1].Content != "answer" {
+		t.Errorf("tool message mismatch: %+v", msgs[1])
+	}
+	if !msgs[1].IsLast {
+		t.Errorf("synthetic tool message should be last")
+	}
+	if msgs[0].IsLast {
+		t.Errorf("assistant should not be last when a tool follows")
+	}
+}
+
+func TestHermesJinjaRendersWithToolCall(t *testing.T) {
+	tmpl, err := NewBuiltinTemplate("hermes", TemplateOptions{
+		AddGenerationPrompt: true,
+		Tools: []ToolSchema{{
+			Type:        "function",
+			Name:        "get_weather",
+			Description: "Return weather",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"city": map[string]any{"type": "string", "description": "The city"},
+				},
+				"required": []string{"city"},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("NewBuiltinTemplate: %v", err)
+	}
+	if tmpl.Engine() != "jinja" {
+		t.Errorf("hermes should use jinja engine, got %s", tmpl.Engine())
+	}
+	record := schema.Record{
+		RecordID: "rec-1",
+		Turns: []schema.Turn{
+			{Role: "user", Text: "weather in paris"},
+			{Role: "assistant", ToolCalls: []schema.ToolCall{{
+				Tool:   "get_weather",
+				Input:  map[string]any{"city": "Paris"},
+				Output: &schema.ToolOutput{Text: "18C, sunny"},
+			}}},
+			{Role: "assistant", Text: "It's 18C."},
+		},
+	}
+	out, err := tmpl.Serialize(record)
+	if err != nil {
+		t.Fatalf("Serialize: %v", err)
+	}
+	content := out.(struct {
+		ID      string `json:"id"`
+		Model   string `json:"model"`
+		Content string `json:"content"`
+	}).Content
+	for _, want := range []string{
+		"<|im_start|>system",
+		"<tools>",
+		"get_weather",
+		"<tool_call>",
+		`"arguments": {"city":"Paris"}`,
+		"<|im_start|>tool",
+		"<tool_response>",
+		"18C, sunny",
+		"<|im_start|>assistant",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("hermes output missing %q\nfull output:\n%s", want, content)
+		}
+	}
+}
+
+func TestBuiltinTemplateNamesIncludesJinja(t *testing.T) {
+	names := BuiltinTemplateNames()
+	for _, want := range []string{"chatml", "hermes", "deepseekr1", "llama3.1_json"} {
+		found := false
+		for _, got := range names {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("missing %q from builtins list: %v", want, names)
+		}
+	}
+}
+
+func TestNewFileTemplateDispatchesByExtension(t *testing.T) {
+	dir := t.TempDir()
+	jpath := filepath.Join(dir, "x.jinja")
+	if err := os.WriteFile(jpath, []byte(`{% for m in messages %}{{m.role}}{% endfor %}`), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	tmpl, err := NewFileTemplate(jpath, TemplateOptions{})
+	if err != nil {
+		t.Fatalf("NewFileTemplate: %v", err)
+	}
+	if tmpl.Engine() != "jinja" {
+		t.Errorf(".jinja should dispatch to jinja engine, got %s", tmpl.Engine())
+	}
+}
