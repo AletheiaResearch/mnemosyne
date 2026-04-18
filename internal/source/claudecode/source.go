@@ -56,13 +56,43 @@ func (s *Source) Discover(context.Context) ([]source.Grouping, error) {
 		}
 		groupings = append(groupings, source.Grouping{
 			ID:               entry.Name(),
-			DisplayLabel:     "claudecode:" + decodeProjectName(entry.Name()),
+			DisplayLabel:     "claudecode:" + s.groupingLabel(files, entry.Name()),
 			Origin:           s.Name(),
 			EstimatedRecords: len(files),
 			EstimatedBytes:   bytes,
 		})
 	}
 	return groupings, nil
+}
+
+func (s *Source) groupingLabel(files []string, dirName string) string {
+	if cwd := probeCwd(files); cwd != "" {
+		if label := source.DisplayLabelFromPath(cwd); label != "" {
+			return label
+		}
+	}
+	return decodeProjectName(dirName)
+}
+
+func probeCwd(files []string) string {
+	for _, path := range files {
+		var found string
+		_ = source.ReadJSONLines(path, func(_ int, raw []byte) error {
+			line, err := source.DecodeJSONObject(raw)
+			if err != nil {
+				return nil
+			}
+			if cwd := source.ExtractString(line, "cwd"); cwd != "" {
+				found = cwd
+				return os.ErrClosed
+			}
+			return nil
+		})
+		if found != "" {
+			return found
+		}
+	}
+	return ""
 }
 
 func (s *Source) Extract(ctx context.Context, grouping source.Grouping, extractCtx source.ExtractionContext, emit func(schema.Record) error) error {
@@ -83,7 +113,7 @@ func (s *Source) Extract(ctx context.Context, grouping source.Grouping, extractC
 			source.ReportWarning(extractCtx, "claudecode skipped %s: %v", path, err)
 			continue
 		}
-		if len(record.Turns) == 0 {
+		if record.Usage.AssistantTurns == 0 {
 			continue
 		}
 		record.Grouping = grouping.DisplayLabel
@@ -109,7 +139,7 @@ func (s *Source) Extract(ctx context.Context, grouping source.Grouping, extractC
 			source.ReportWarning(extractCtx, "claudecode skipped %s: %v", subagentDir, err)
 			continue
 		}
-		if len(record.Turns) == 0 {
+		if record.Usage.AssistantTurns == 0 {
 			continue
 		}
 		record.Grouping = grouping.DisplayLabel
@@ -225,7 +255,9 @@ func assembleClaudeRecord(entries []map[string]any, recordID string) schema.Reco
 			record.WorkingDir = source.ExtractString(entry, "cwd")
 		}
 		if record.Branch == "" {
-			record.Branch = source.ExtractString(entry, "gitBranch")
+			if branch := source.ExtractString(entry, "gitBranch"); branch != "" && branch != "HEAD" {
+				record.Branch = branch
+			}
 		}
 
 		switch typ {
