@@ -28,16 +28,24 @@ type VerifiedSecret struct {
 }
 
 // ApplyStats is the accumulator ApplyRecord returns. Redactions counts
-// every substitution performed; VerifiedSecrets lists each unique secret
-// the pipeline confirmed live against a provider verifier, capped at 20.
+// every substitution performed; VerifiedSecrets lists every unique
+// secret the pipeline confirmed live against a provider verifier.
+//
+// VerifiedSecrets is deliberately uncapped: cross-record aggregators
+// (extract) dedup on Fingerprint to compute the final count, and a
+// capped list here would silently drop fingerprints for records with
+// more than 20 distinct verified keys — undercounting the total and
+// letting those dropped fingerprints be double-counted if they reappear
+// in a later record. Display caps belong at the summary layer.
 type ApplyStats struct {
 	Redactions          int
 	VerifiedSecretCount int
 	VerifiedSecrets     []VerifiedSecret
 
-	// seenVerified dedups raw verified values while walking the record.
-	// Unexported because callers shouldn't need the raw secret — only the
-	// count and fingerprinted labels are surfaced via VerifiedSecret*.
+	// seenVerified dedups verified fingerprints within a single
+	// ApplyRecord call. Unexported because callers shouldn't need the
+	// raw secret — only the count and fingerprinted labels are surfaced
+	// via VerifiedSecret*.
 	seenVerified map[string]struct{}
 }
 
@@ -70,13 +78,11 @@ func (s *ApplyStats) recordVerified(raw, label string) bool {
 	}
 	s.seenVerified[raw] = struct{}{}
 	s.VerifiedSecretCount++
-	if len(s.VerifiedSecrets) < 20 {
-		sum := sha256.Sum256([]byte(raw))
-		s.VerifiedSecrets = append(s.VerifiedSecrets, VerifiedSecret{
-			Label:       label,
-			Fingerprint: hex.EncodeToString(sum[:]),
-		})
-	}
+	sum := sha256.Sum256([]byte(raw))
+	s.VerifiedSecrets = append(s.VerifiedSecrets, VerifiedSecret{
+		Label:       label,
+		Fingerprint: hex.EncodeToString(sum[:]),
+	})
 	return true
 }
 

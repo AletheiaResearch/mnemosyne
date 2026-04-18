@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -338,6 +339,71 @@ func TestApplyRecordVerifiesSecretInBearerHeader(t *testing.T) {
 	}
 	if !containsWith(stats.VerifiedLabels(), "PostHogPersonalAPIKey") {
 		t.Fatalf("expected PostHogPersonalAPIKey label, got %v", stats.VerifiedLabels())
+	}
+}
+
+// TestApplyRecordVerifiedSecretsUncapped ensures every verified
+// fingerprint reaches ApplyStats.VerifiedSecrets even when a single
+// record contains more than the 20-entry display cap previously applied
+// here. Capping inside the accumulator would make cross-record
+// aggregators (extract) both undercount the total and double-count any
+// fingerprint that got dropped and later reappeared.
+func TestApplyRecordVerifiedSecretsUncapped(t *testing.T) {
+	t.Parallel()
+
+	const keys = 25
+	bodies := make([]string, keys)
+	allowed := make(map[string]struct{}, keys)
+	for i := range bodies {
+		bodies[i] = fmt.Sprintf("abcdefghijklmnopqrstuvwxyz012345%04d", i)
+		allowed["Bearer "+fakeKey(phxPrefix, bodies[i])] = struct{}{}
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/users/@me/" {
+			if _, ok := allowed[r.Header.Get("Authorization")]; ok {
+				w.WriteHeader(http.StatusOK)
+				_, _ = io.WriteString(w, `{"email":"ok@example.com"}`)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+
+	pipeline, err := New(Options{
+		Detectors:     posthogScanners(ts.URL),
+		VerifySecrets: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var builder strings.Builder
+	for i, body := range bodies {
+		if i > 0 {
+			builder.WriteString(" ")
+		}
+		builder.WriteString(fmt.Sprintf("k%d=", i))
+		builder.WriteString(fakeKey(phxPrefix, body))
+	}
+	_, stats := pipeline.ApplyRecord(schema.Record{
+		Turns: []schema.Turn{{Text: builder.String()}},
+	})
+
+	if stats.VerifiedSecretCount != keys {
+		t.Fatalf("expected VerifiedSecretCount=%d, got %d", keys, stats.VerifiedSecretCount)
+	}
+	if len(stats.VerifiedSecrets) != keys {
+		t.Fatalf("expected %d VerifiedSecrets entries (uncapped), got %d",
+			keys, len(stats.VerifiedSecrets))
+	}
+	seen := make(map[string]struct{}, keys)
+	for _, vs := range stats.VerifiedSecrets {
+		seen[vs.Fingerprint] = struct{}{}
+	}
+	if len(seen) != keys {
+		t.Fatalf("expected %d distinct fingerprints, got %d", keys, len(seen))
 	}
 }
 
