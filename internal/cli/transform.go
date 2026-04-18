@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/AletheiaResearch/mnemosyne/internal/config"
 	"github.com/AletheiaResearch/mnemosyne/internal/schema"
 	"github.com/AletheiaResearch/mnemosyne/internal/serialize"
+	"github.com/AletheiaResearch/mnemosyne/internal/serialize/toolcatalog"
 )
 
 func newTransformCommand(rt *runtime) *cobra.Command {
@@ -24,6 +26,8 @@ func newTransformCommand(rt *runtime) *cobra.Command {
 		bosToken            string
 		eosToken            string
 		addGenerationPrompt bool
+		toolsFile           string
+		noTools             bool
 	)
 
 	cmd := &cobra.Command{
@@ -42,14 +46,29 @@ func newTransformCommand(rt *runtime) *cobra.Command {
 				return err
 			}
 
-			serializer, err := resolveTransformSerializer(cmd, cfg.ChatTemplateValue(), transformFlags{
+			flags := transformFlags{
 				Format:              format,
 				TemplateName:        templateName,
 				TemplateFile:        templateFile,
 				BOSToken:            bosToken,
 				EOSToken:            eosToken,
 				AddGenerationPrompt: addGenerationPrompt,
-			})
+			}
+
+			usingTemplate, err := templatePathSelected(cmd, cfg.ChatTemplateValue(), flags)
+			if err != nil {
+				return err
+			}
+
+			var tools []serialize.ToolSchema
+			if usingTemplate && !noTools {
+				tools, err = resolveTransformTools(input, toolsFile)
+				if err != nil {
+					return err
+				}
+			}
+
+			serializer, err := resolveTransformSerializer(cmd, cfg.ChatTemplateValue(), flags, tools)
 			if err != nil {
 				return err
 			}
@@ -73,11 +92,13 @@ func newTransformCommand(rt *runtime) *cobra.Command {
 	cmd.Flags().StringVar(&input, "input", "", "path to canonical JSONL")
 	cmd.Flags().StringVar(&output, "output", "", "path to transformed output")
 	cmd.Flags().StringVar(&format, "format", "canonical", "serializer to use")
-	cmd.Flags().StringVar(&templateName, "template-name", "", "render through a builtin chat template (e.g. chatml, zephyr, vicuna)")
-	cmd.Flags().StringVar(&templateFile, "template-file", "", "render through a chat template loaded from this file")
-	cmd.Flags().StringVar(&bosToken, "bos-token", "", "value exposed to templates as .BOSToken")
-	cmd.Flags().StringVar(&eosToken, "eos-token", "", "value exposed to templates as .EOSToken")
-	cmd.Flags().BoolVar(&addGenerationPrompt, "add-generation-prompt", false, "set .AddGenerationPrompt to true for template rendering")
+	cmd.Flags().StringVar(&templateName, "template-name", "", "render through a builtin chat template (e.g. chatml, hermes, deepseekr1)")
+	cmd.Flags().StringVar(&templateFile, "template-file", "", "render through a chat template loaded from this file (.tmpl or .jinja)")
+	cmd.Flags().StringVar(&bosToken, "bos-token", "", "value exposed to templates as bos_token")
+	cmd.Flags().StringVar(&eosToken, "eos-token", "", "value exposed to templates as eos_token")
+	cmd.Flags().BoolVar(&addGenerationPrompt, "add-generation-prompt", false, "set add_generation_prompt to true for template rendering")
+	cmd.Flags().StringVar(&toolsFile, "tools-file", "", "JSON file of tool schemas to expose as `tools` in template context (overrides inference)")
+	cmd.Flags().BoolVar(&noTools, "no-tools", false, "skip tool inference and leave the template's tools list empty")
 	return cmd
 }
 
@@ -90,6 +111,111 @@ type transformFlags struct {
 	AddGenerationPrompt bool
 }
 
+// templatePathSelected reports whether the effective serializer is a template
+// (either explicit flag or persisted default).
+func templatePathSelected(cmd *cobra.Command, defaults config.ChatTemplate, f transformFlags) (bool, error) {
+	flagChanged := cmd.Flags().Changed
+	templateNameSet := flagChanged("template-name")
+	templateFileSet := flagChanged("template-file")
+	if templateNameSet && templateFileSet {
+		return false, errors.New("--template-name and --template-file are mutually exclusive")
+	}
+	formatSet := flagChanged("format")
+	switch {
+	case templateNameSet && f.TemplateName != "":
+		return true, nil
+	case templateFileSet && f.TemplateFile != "":
+		return true, nil
+	case formatSet:
+		return false, nil
+	case defaults.Name != "" || defaults.File != "":
+		return true, nil
+	}
+	return false, nil
+}
+
+// resolveTransformTools runs the infer → catalog → override chain. Origin(s)
+// are discovered while scanning records, so a dataset mixing harnesses pulls
+// in all relevant catalogs. --tools-file replaces the result when supplied.
+func resolveTransformTools(inputPath, toolsFile string) ([]serialize.ToolSchema, error) {
+	if toolsFile != "" {
+		f, err := os.Open(toolsFile)
+		if err != nil {
+			return nil, fmt.Errorf("open tools file: %w", err)
+		}
+		defer f.Close()
+		return serialize.ReadToolSchemas(f)
+	}
+
+	inferred, origins, err := inferToolsAndOrigins(inputPath)
+	if err != nil {
+		return nil, err
+	}
+	catalog := catalogFromOrigins(origins)
+	return serialize.MergeToolCatalog(inferred, catalog), nil
+}
+
+func inferToolsAndOrigins(path string) ([]serialize.ToolSchema, []string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer f.Close()
+
+	// Capture origins in a single pass by copying through a tee.
+	var originBuf []string
+	seen := map[string]struct{}{}
+	pr, pw := io.Pipe()
+	errCh := make(chan error, 1)
+	go func() {
+		defer pw.Close()
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			if _, err := pw.Write(append(append([]byte{}, line...), '\n')); err != nil {
+				errCh <- err
+				return
+			}
+			var head struct {
+				Origin string `json:"origin"`
+			}
+			if err := json.Unmarshal(line, &head); err == nil && head.Origin != "" {
+				if _, dup := seen[head.Origin]; !dup {
+					seen[head.Origin] = struct{}{}
+					originBuf = append(originBuf, head.Origin)
+				}
+			}
+		}
+		errCh <- scanner.Err()
+	}()
+
+	tools, inferErr := serialize.InferTools(pr)
+	if inferErr != nil {
+		return nil, nil, inferErr
+	}
+	if err := <-errCh; err != nil {
+		return nil, nil, err
+	}
+	return tools, originBuf, nil
+}
+
+func catalogFromOrigins(origins []string) []serialize.ToolSchema {
+	var merged []serialize.ToolSchema
+	for _, origin := range origins {
+		reader := toolcatalog.LoadAsReader(origin)
+		if reader == nil {
+			continue
+		}
+		tools, err := serialize.ReadToolSchemas(reader)
+		if err != nil {
+			continue
+		}
+		merged = append(merged, tools...)
+	}
+	return merged
+}
+
 // resolveTransformSerializer picks the right serializer, applying persisted
 // chat-template defaults when the caller did not set the relevant CLI flag.
 //
@@ -100,7 +226,7 @@ type transformFlags struct {
 //  4. Default --format value ("canonical").
 //
 // Token and generation-prompt flags fall back to persisted values the same way.
-func resolveTransformSerializer(cmd *cobra.Command, defaults config.ChatTemplate, f transformFlags) (serialize.Serializer, error) {
+func resolveTransformSerializer(cmd *cobra.Command, defaults config.ChatTemplate, f transformFlags, tools []serialize.ToolSchema) (serialize.Serializer, error) {
 	flagChanged := cmd.Flags().Changed
 	templateNameSet := flagChanged("template-name")
 	templateFileSet := flagChanged("template-file")
@@ -114,6 +240,7 @@ func resolveTransformSerializer(cmd *cobra.Command, defaults config.ChatTemplate
 		BOSToken:            f.BOSToken,
 		EOSToken:            f.EOSToken,
 		AddGenerationPrompt: f.AddGenerationPrompt,
+		Tools:               tools,
 	}
 	if !flagChanged("bos-token") {
 		opts.BOSToken = defaults.BOSToken

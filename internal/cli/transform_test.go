@@ -56,7 +56,7 @@ func TestResolveExplicitTemplateNameWins(t *testing.T) {
 	s, err := resolveTransformSerializer(cmd, config.ChatTemplate{File: "/persisted.tmpl"}, transformFlags{
 		Format:       "canonical",
 		TemplateName: "chatml",
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestResolveExplicitFormatBeatsPersistedTemplate(t *testing.T) {
 	cmd := transformCmdWithFlags(map[string]string{"format": "flat"})
 	s, err := resolveTransformSerializer(cmd, config.ChatTemplate{Name: "chatml"}, transformFlags{
 		Format: "flat",
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestResolvePersistedNameUsedWhenNoFlagsSet(t *testing.T) {
 	cmd := transformCmdWithFlags(nil)
 	s, err := resolveTransformSerializer(cmd, config.ChatTemplate{Name: "zephyr", EOSToken: "</s>"}, transformFlags{
 		Format: "canonical",
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestResolvePersistedFileUsedWhenNoFlagsSet(t *testing.T) {
 	cmd := transformCmdWithFlags(nil)
 	s, err := resolveTransformSerializer(cmd, config.ChatTemplate{File: path}, transformFlags{
 		Format: "canonical",
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,6 +113,7 @@ func TestResolvePersistedTokensFillInForExplicitTemplate(t *testing.T) {
 	s, err := resolveTransformSerializer(cmd,
 		config.ChatTemplate{EOSToken: "</s>", AddGenerationPrompt: true},
 		transformFlags{TemplateName: "zephyr", Format: "canonical"},
+		nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -146,7 +147,7 @@ func TestResolveMutuallyExclusiveExplicitFlags(t *testing.T) {
 	_, err := resolveTransformSerializer(cmd, config.ChatTemplate{}, transformFlags{
 		TemplateName: "chatml",
 		TemplateFile: "/tmp/x.tmpl",
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("expected mutually exclusive error")
 	}
@@ -156,7 +157,7 @@ func TestResolveUnknownFormat(t *testing.T) {
 	cmd := transformCmdWithFlags(map[string]string{"format": "does-not-exist"})
 	_, err := resolveTransformSerializer(cmd, config.ChatTemplate{}, transformFlags{
 		Format: "does-not-exist",
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("expected unknown serializer error")
 	}
@@ -291,6 +292,71 @@ func TestTransformRecordsInvalidJSON(t *testing.T) {
 	var syntaxErr *json.SyntaxError
 	if !errors.As(err, &syntaxErr) {
 		t.Errorf("want *json.SyntaxError, got %T: %v", err, err)
+	}
+}
+
+func TestInferToolsAndOriginsFromTempFile(t *testing.T) {
+	t.Parallel()
+
+	records := []schema.Record{
+		{RecordID: "r-1", Origin: "claudecode", Turns: []schema.Turn{
+			{Role: "assistant", ToolCalls: []schema.ToolCall{
+				{Tool: "Read", Input: map[string]any{"file_path": "/tmp/x"}},
+			}},
+		}},
+		{RecordID: "r-2", Origin: "claudecode", Turns: []schema.Turn{
+			{Role: "assistant", ToolCalls: []schema.ToolCall{
+				{Tool: "Bash", Input: map[string]any{"command": "ls"}},
+			}},
+		}},
+	}
+
+	path := filepath.Join(t.TempDir(), "in.jsonl")
+	var buf bytes.Buffer
+	for _, r := range records {
+		data, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		buf.Write(data)
+		buf.WriteByte('\n')
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tools, origins, err := inferToolsAndOrigins(path)
+	if err != nil {
+		t.Fatalf("inferToolsAndOrigins: %v", err)
+	}
+	if len(origins) != 1 || origins[0] != "claudecode" {
+		t.Errorf("origins = %v, want [claudecode]", origins)
+	}
+	gotNames := []string{}
+	for _, tool := range tools {
+		gotNames = append(gotNames, tool.Name)
+	}
+	if len(gotNames) != 2 || gotNames[0] != "Bash" || gotNames[1] != "Read" {
+		t.Errorf("tool names = %v, want sorted [Bash Read]", gotNames)
+	}
+}
+
+func TestResolveTransformToolsReadsToolsFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	toolsPath := filepath.Join(dir, "tools.json")
+	if err := os.WriteFile(toolsPath, []byte(`[{"name":"custom","description":"from file"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// input is irrelevant when tools-file is given, but the function opens it
+	// lazily (only if tools-file is empty) so we can pass a missing path.
+	tools, err := resolveTransformTools("/does-not-exist", toolsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tools) != 1 || tools[0].Name != "custom" {
+		t.Errorf("got %+v, want single 'custom' tool", tools)
 	}
 }
 
