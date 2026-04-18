@@ -19,11 +19,7 @@
 
 {#- This block extracts the system message, so we can slot it into the right place. #}
 {%- if messages[0]['role'] == 'system' %}
-    {%- if messages[0]['content'] is string %}
-        {%- set system_message = messages[0]['content']|trim %}
-    {%- else %}
-        {%- set system_message = messages[0]['content'][0]['text']|trim %}
-    {%- endif %}
+    {%- set system_message = messages[0]['content']|trim %}
     {%- set messages = messages[1:] %}
 {%- else %}
     {%- if tools is not none %}
@@ -56,11 +52,7 @@
 {%- if tools_in_user_message and not tools is none %}
     {#- Extract the first user message so we can plug it in here #}
     {%- if messages | length != 0 %}
-        {%- if messages[0]['content'] is string %}
-            {%- set first_user_message = messages[0]['content']|trim %}
-        {%- else %}
-            {%- set first_user_message = messages[0]['content'] | selectattr('type', 'equalto', 'text') | map(attribute='text') | map('trim') | join('\n') %}
-        {%- endif %}
+        {%- set first_user_message = messages[0]['content']|trim %}
         {%- set messages = messages[1:] %}
     {%- else %}
         {{- raise_exception("Cannot put tools in the first user message when there's no first user message!") }}
@@ -80,12 +72,11 @@
 {%- for message in messages %}
     {%- if not (message.role == 'ipython' or message.role == 'tool' or 'tool_calls' in message) %}
         {{- '<|start_header_id|>' + message['role'] + '<|end_header_id|>\n\n' }}
-        {%- if message['content'] is string %}
-            {{- message['content'] | trim}}
-        {%- else %}
-            {%- for content in message['content'] %}
-                {%- if content['type'] == 'text' %}
-                    {{- content['text'] | trim }}
+        {{- message['content'] | trim }}
+        {%- if message['attachments'] is defined %}
+            {%- for att in message['attachments'] %}
+                {%- if att['type'] == 'text' and att['text'] is defined %}
+                    {{- att['text'] | trim }}
                 {%- endif %}
             {%- endfor %}
         {%- endif %}
@@ -103,15 +94,7 @@
         {{- "<|eot_id|>" }}
     {%- elif message.role == "tool" or message.role == "ipython" %}
         {{- "<|start_header_id|>ipython<|end_header_id|>\n\n" }}
-        {%- if message.content is string %}
-            {{- { "output": message.content } | tojson }}
-        {%- else %}
-            {%- for content in message['content']  %}
-                {%- if content['type']  == 'text' %}
-                    {{- { "output": content['text']  } | tojson }}
-                {%- endif %}
-            {%- endfor %}
-        {%- endif %}
+        {{- { "output": message.content } | tojson }}
         {{- "<|eot_id|>" }}
     {%- endif %}
 {%- endfor %}

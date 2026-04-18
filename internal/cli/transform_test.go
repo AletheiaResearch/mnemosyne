@@ -418,11 +418,15 @@ func TestInferToolsAndOriginsAcceptsLargeLines(t *testing.T) {
 	}
 }
 
-func TestTransformRecordsVicunaAlternationError(t *testing.T) {
+func TestTransformRecordsVicunaMergesSameRoleRuns(t *testing.T) {
 	t.Parallel()
 
+	// Adjacent same-role turns used to trip vicuna's alternation check
+	// and abort the pipeline; the Go-template projection now merges them
+	// so pathological inputs and tool-call-then-final-reply traces both
+	// render cleanly.
 	record := schema.Record{
-		RecordID: "rec-bad",
+		RecordID: "rec-merge",
 		Turns: []schema.Turn{
 			{Role: "user", Text: "one"},
 			{Role: "user", Text: "two"},
@@ -436,11 +440,10 @@ func TestTransformRecordsVicunaAlternationError(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err = transformRecords(bytes.NewBufferString(input), &out, tmpl)
-	if err == nil {
-		t.Fatal("expected vicuna alternation error")
+	if err := transformRecords(bytes.NewBufferString(input), &out, tmpl); err != nil {
+		t.Fatalf("transformRecords: %v", err)
 	}
-	if !strings.Contains(err.Error(), "alternate") {
-		t.Errorf("error %q does not mention alternation", err)
+	if !strings.Contains(out.String(), "USER: one\\ntwo") {
+		t.Errorf("expected merged user content in output, got %s", out.String())
 	}
 }

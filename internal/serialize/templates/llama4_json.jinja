@@ -17,22 +17,24 @@
 
 {#- upstream-fix: the released template passes an undefined `data` into
     is_array_of_type_objects, so the image/text dispatch never fires and
-    multimodal turns fall through to tojson. The check is inlined against
-    the actual message['content'] and the type-array branch now runs as
-    intended. -#}
+    multimodal turns fall through to tojson. Mnemosyne always delivers
+    content as a string and exposes attachments separately via
+    message['attachments'], so the macro renders the text once and then
+    walks attachments for image tokens. -#}
 {%- macro render_message(message) %}
     {%- if message['content'] is string %}
         {{- message['content']|trim }}
-    {%- elif message['content'] is iterable %}
-        {%- for content in message['content'] %}
-            {%- if content['type'] == 'image' %}
-                {{- '<|image|>' }}
-            {%- elif content['type'] == 'text' %}
-                {{- content['text']|trim }}
-            {%- endif %}
-        {%- endfor %}
     {%- else %}
         {{- message['content']|tojson }}
+    {%- endif %}
+    {%- if message['attachments'] is defined %}
+        {%- for att in message['attachments'] %}
+            {%- if att['type'] == 'image' %}
+                {{- '<|image|>' }}
+            {%- elif att['type'] == 'text' and att['text'] is defined %}
+                {{- att['text']|trim }}
+            {%- endif %}
+        {%- endfor %}
     {%- endif %}
 {%- endmacro %}
 

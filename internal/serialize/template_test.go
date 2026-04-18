@@ -118,20 +118,20 @@ func TestVicunaTemplate(t *testing.T) {
 	}
 }
 
-func TestVicunaAlternationFailure(t *testing.T) {
+func TestVicunaMergesSameRoleRuns(t *testing.T) {
+	// vicuna's template still enforces strict alternation internally, but
+	// the Go-template projection merges consecutive same-role messages
+	// before rendering so tool-call-then-final-reply traces (and other
+	// pathological inputs) don't abort.
 	record := sampleRecord([]schema.Turn{
 		{Role: "user", Text: "first"},
 		{Role: "user", Text: "second"},
 	})
 
-	tmpl, err := NewBuiltinTemplate("vicuna", TemplateOptions{})
-	if err != nil {
-		t.Fatalf("NewBuiltinTemplate: %v", err)
-	}
-	if _, err := tmpl.Serialize(record); err == nil {
-		t.Fatal("expected alternation error, got nil")
-	} else if !strings.Contains(err.Error(), "alternate") {
-		t.Errorf("error %q does not mention alternation", err)
+	got := renderBuiltin(t, "vicuna", TemplateOptions{BOSToken: "<s>", EOSToken: "</s>"}, record)
+	want := "<s>USER: first\nsecond\n"
+	if got != want {
+		t.Errorf("vicuna same-role merge mismatch\ngot:  %q\nwant: %q", got, want)
 	}
 }
 
@@ -521,8 +521,16 @@ func TestToolOutputRawFallbackRendersAsJSON(t *testing.T) {
 	}
 }
 
-func TestJinjaContentIsListWhenAttachmentsPresent(t *testing.T) {
-	source := `{% for m in messages %}{% if m.content is string %}STR:{{m.content}}{% else %}{% for c in m.content %}{{c.type}}{% if c.text %}:{{c.text}}{% endif %}{% if c.url %}@{{c.url}}{% endif %};{% endfor %}{% endif %}
+func TestJinjaAttachmentsAreExposedAsSiblingField(t *testing.T) {
+	// `content` must remain a plain string so string-oriented templates
+	// (hermes, deepseek*, chatml, zephyr, vicuna) render correctly even
+	// when a turn carries attachments. Rich payloads are exposed via the
+	// sibling `attachments` field, which multimodal templates iterate.
+	source := `{% for m in messages -%}
+{{ m.role }}|{{ m.content }}|
+{%- if m.attachments is defined %}
+{%- for a in m.attachments %}{{ a.type }}{% if a.text %}:{{ a.text }}{% endif %}{% if a.url %}@{{ a.url }}{% endif %};{% endfor %}
+{%- endif %}
 {% endfor %}`
 	tmpl, err := newJinjaTemplate("inline-attach.jinja", source, TemplateOptions{})
 	if err != nil {
@@ -546,14 +554,51 @@ func TestJinjaContentIsListWhenAttachmentsPresent(t *testing.T) {
 		Model   string `json:"model"`
 		Content string `json:"content"`
 	}).Content
-	if !strings.Contains(content, "text:describe this;") {
-		t.Errorf("missing text block for user turn: %q", content)
+	if !strings.Contains(content, "user|describe this|") {
+		t.Errorf("content should be the plain-string text, got: %q", content)
 	}
 	if !strings.Contains(content, "image@https://example.com/cat.png;") {
-		t.Errorf("missing image block with URL: %q", content)
+		t.Errorf("attachment should be exposed via the sibling field: %q", content)
 	}
-	if !strings.Contains(content, "STR:a cat") {
-		t.Errorf("assistant turn without attachments should stay a string: %q", content)
+	if !strings.Contains(content, "assistant|a cat|") {
+		t.Errorf("attachment-free turn should still render cleanly: %q", content)
+	}
+}
+
+func TestStringOrientedJinjaTemplatesNeverRenderBlockArrays(t *testing.T) {
+	// Regression guard: attachment-bearing turns must not leak a literal
+	// content-block array (e.g. [{"type": "image", ...}]) into templates
+	// that string-concat message.content — hermes and deepseekr1 both did
+	// so before attachments moved to a sibling field.
+	record := schema.Record{
+		RecordID: "rec-attach",
+		Turns: []schema.Turn{
+			{Role: "user", Text: "what is this?", Attachments: []schema.ContentBlock{
+				{Type: "image", URL: "https://example.com/cat.png"},
+			}},
+			{Role: "assistant", Text: "a cat"},
+		},
+	}
+	for _, name := range []string{"hermes", "deepseekr1", "deepseekv3", "deepseekv31", "xlam_llama"} {
+		tmpl, err := NewBuiltinTemplate(name, TemplateOptions{})
+		if err != nil {
+			t.Fatalf("NewBuiltinTemplate(%q): %v", name, err)
+		}
+		out, err := tmpl.Serialize(record)
+		if err != nil {
+			t.Fatalf("%s Serialize: %v", name, err)
+		}
+		content := out.(struct {
+			ID      string `json:"id"`
+			Model   string `json:"model"`
+			Content string `json:"content"`
+		}).Content
+		if strings.Contains(content, `"type": "image"`) || strings.Contains(content, `[{"type":`) {
+			t.Errorf("%s leaked a content-block array into the prompt:\n%s", name, content)
+		}
+		if !strings.Contains(content, "what is this?") {
+			t.Errorf("%s lost the user text: %s", name, content)
+		}
 	}
 }
 
@@ -622,36 +667,62 @@ func TestHermesRendersWithInferredToolSchema(t *testing.T) {
 
 func TestGoTemplatesSkipSyntheticToolMessages(t *testing.T) {
 	// vicuna enforces strict user/assistant alternation via raiseException.
-	// Synthetic tool-role messages injected for Jinja must not reach Go
-	// text/template rendering, or any tool-using record would abort.
-	record := schema.Record{
-		RecordID: "rec-1",
-		Turns: []schema.Turn{
-			{Role: "user", Text: "weather?"},
-			{Role: "assistant", Text: "one moment", ToolCalls: []schema.ToolCall{{
-				Tool:   "get_weather",
-				Input:  map[string]any{"city": "Paris"},
-				Output: &schema.ToolOutput{Text: "18C"},
-			}}},
-			{Role: "user", Text: "thanks"},
-			{Role: "assistant", Text: "welcome"},
+	// Two cases matter:
+	//   - synthetic tool-role messages (Output attached to a ToolCall) must
+	//     be dropped before Go rendering
+	//   - an assistant turn that emitted only a tool call, followed by the
+	//     assistant's final reply, must collapse into a single assistant
+	//     row — otherwise the alternation check fires on `assistant ->
+	//     assistant`.
+	cases := []struct {
+		name string
+		turns []schema.Turn
+	}{
+		{
+			name: "output_attached_to_toolcall",
+			turns: []schema.Turn{
+				{Role: "user", Text: "weather?"},
+				{Role: "assistant", Text: "one moment", ToolCalls: []schema.ToolCall{{
+					Tool:   "get_weather",
+					Input:  map[string]any{"city": "Paris"},
+					Output: &schema.ToolOutput{Text: "18C"},
+				}}},
+				{Role: "user", Text: "thanks"},
+				{Role: "assistant", Text: "welcome"},
+			},
+		},
+		{
+			name: "pure_toolcall_then_assistant_reply",
+			turns: []schema.Turn{
+				{Role: "user", Text: "weather?"},
+				{Role: "assistant", ToolCalls: []schema.ToolCall{{
+					Tool:  "get_weather",
+					Input: map[string]any{"city": "Paris"},
+				}}},
+				{Role: "assistant", Text: "Paris is 18C"},
+			},
 		},
 	}
-	tmpl, err := NewBuiltinTemplate("vicuna", TemplateOptions{BOSToken: "<s>", EOSToken: "</s>"})
-	if err != nil {
-		t.Fatalf("NewBuiltinTemplate: %v", err)
-	}
-	out, err := tmpl.Serialize(record)
-	if err != nil {
-		t.Fatalf("vicuna rejected tool-using trace: %v", err)
-	}
-	content := out.(struct {
-		ID      string `json:"id"`
-		Model   string `json:"model"`
-		Content string `json:"content"`
-	}).Content
-	if strings.Contains(content, "TOOL:") || strings.Contains(content, "[tool]") {
-		t.Errorf("synthetic tool role leaked into go-text render: %q", content)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			record := schema.Record{RecordID: "rec-" + tc.name, Turns: tc.turns}
+			tmpl, err := NewBuiltinTemplate("vicuna", TemplateOptions{BOSToken: "<s>", EOSToken: "</s>"})
+			if err != nil {
+				t.Fatalf("NewBuiltinTemplate: %v", err)
+			}
+			out, err := tmpl.Serialize(record)
+			if err != nil {
+				t.Fatalf("vicuna rejected tool-using trace: %v", err)
+			}
+			content := out.(struct {
+				ID      string `json:"id"`
+				Model   string `json:"model"`
+				Content string `json:"content"`
+			}).Content
+			if strings.Contains(content, "TOOL:") || strings.Contains(content, "[tool]") {
+				t.Errorf("synthetic tool role leaked into go-text render: %q", content)
+			}
+		})
 	}
 }
 

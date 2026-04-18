@@ -307,9 +307,12 @@ func messagesToJinja(messages []templateMessage) []map[string]any {
 	for i, m := range messages {
 		entry := map[string]any{
 			"role":    m.Role,
-			"content": contentForJinja(m),
+			"content": m.Content,
 			"index":   m.Index,
 			"is_last": m.IsLast,
+		}
+		if len(m.Attachments) > 0 {
+			entry["attachments"] = attachmentsToJinja(m.Attachments)
 		}
 		// Precomputed adjacency so templates can avoid loop.previtem /
 		// loop.nextitem, which gonja doesn't implement.
@@ -350,19 +353,15 @@ func messagesToJinja(messages []templateMessage) []map[string]any {
 	return out
 }
 
-// contentForJinja emits either a plain string (no attachments — keeps
-// string-oriented templates like hermes/chatml/zephyr working) or the
-// OpenAI-style list of content blocks that multimodal Llama templates
-// expect when `message['content']` is iterated for image/text parts.
-func contentForJinja(m templateMessage) any {
-	if len(m.Attachments) == 0 {
-		return m.Content
-	}
-	blocks := make([]map[string]any, 0, len(m.Attachments)+1)
-	if m.Content != "" {
-		blocks = append(blocks, map[string]any{"type": "text", "text": m.Content})
-	}
-	for _, att := range m.Attachments {
+// attachmentsToJinja projects per-message attachments into an OpenAI-style
+// list of content blocks. Exposed as a sibling `attachments` field rather
+// than folded into `content` so string-oriented templates (hermes, deepseek,
+// chatml, zephyr, vicuna) keep working with a plain-string content; only
+// multimodal-aware bundled templates iterate `attachments` to emit image
+// tokens.
+func attachmentsToJinja(atts []schema.ContentBlock) []map[string]any {
+	out := make([]map[string]any, 0, len(atts))
+	for _, att := range atts {
 		block := map[string]any{"type": att.Type}
 		if att.Text != "" {
 			block["text"] = att.Text
@@ -379,9 +378,9 @@ func contentForJinja(m templateMessage) any {
 		if att.Name != "" {
 			block["name"] = att.Name
 		}
-		blocks = append(blocks, block)
+		out = append(out, block)
 	}
-	return blocks
+	return out
 }
 
 func toolsToJinja(tools []ToolSchema) []map[string]any {
@@ -411,14 +410,26 @@ func toolsToJinja(tools []ToolSchema) []map[string]any {
 }
 
 // stripToolMessages drops synthetic `tool`-role messages for Go text/template
-// rendering. The bundled Go templates (chatml, zephyr, vicuna) are string-only
-// and have no structured tool vocabulary; vicuna in particular enforces strict
-// user/assistant alternation, so letting a synthetic tool message through
-// aborts with raiseException on any tool-using trace.
+// rendering and merges consecutive same-role runs. The bundled Go templates
+// (chatml, zephyr, vicuna) are string-only and have no structured tool
+// vocabulary; vicuna in particular enforces strict user/assistant alternation,
+// so an assistant turn that carried only a tool call must not leave two
+// adjacent assistant rows once the tool row is gone. Same-role runs are
+// concatenated with a blank line so the final assistant reply still renders.
 func stripToolMessages(msgs []templateMessage) []templateMessage {
-	kept := msgs[:0:0]
+	kept := make([]templateMessage, 0, len(msgs))
 	for _, m := range msgs {
 		if m.Role == "tool" {
+			continue
+		}
+		if n := len(kept); n > 0 && kept[n-1].Role == m.Role {
+			prev := &kept[n-1]
+			if m.Content != "" {
+				if prev.Content != "" {
+					prev.Content += "\n"
+				}
+				prev.Content += m.Content
+			}
 			continue
 		}
 		kept = append(kept, m)
