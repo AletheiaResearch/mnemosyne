@@ -155,6 +155,18 @@ func validateIsolatePreflight(cfg config.Config) error {
 	if cfg.LastExtract == nil || len(cfg.LastExtract.IsolateSessions) == 0 {
 		return errors.New("publish --isolate requires extract --isolate first")
 	}
+	// All sessions from a single extract share one redaction key; a
+	// divergence means the posture changed mid-flow and we can't emit a
+	// coherent header. Catch this here so the repo is never created.
+	sharedKey := cfg.LastExtract.IsolateSessions[0].RedactionKey
+	for _, session := range cfg.LastExtract.IsolateSessions[1:] {
+		if session.RedactionKey != sharedKey {
+			return errors.New("isolate sessions have mismatched redaction keys; re-run extract --isolate")
+		}
+	}
+	if _, _, _, ok := redact.ParseRedactionKey(sharedKey); !ok {
+		return fmt.Errorf("unrecognised redaction key %q; re-run extract --isolate", sharedKey)
+	}
 	for _, session := range cfg.LastExtract.IsolateSessions {
 		if _, err := os.Stat(session.StagingPath); err != nil {
 			return fmt.Errorf("staging file %s: %w", session.StagingPath, err)
@@ -171,6 +183,12 @@ func validateIsolatePreflight(cfg config.Config) error {
 }
 
 func runIsolatePublish(cmd *cobra.Command, rt *runtime, cfg config.Config, repoID, publishAttestation string) error {
+	// validateIsolatePreflight already confirmed every session shares one
+	// well-formed RedactionKey; parse it here to drive header fields. The
+	// key — not the live cfg — is the authoritative record of the posture
+	// the uploaded bytes were produced under.
+	pipelineFP, configFP, keepImages, _ := redact.ParseRedactionKey(cfg.LastExtract.IsolateSessions[0].RedactionKey)
+
 	localEntries := make([]card.ManifestEntry, 0, len(cfg.LastExtract.IsolateSessions))
 	for _, session := range cfg.LastExtract.IsolateSessions {
 		localEntries = append(localEntries, card.ManifestEntry{
@@ -219,10 +237,10 @@ func runIsolatePublish(cmd *cobra.Command, rt *runtime, cfg config.Config, repoI
 	header := card.ManifestHeader{
 		Tool:                "mnemosyne/" + version.Version,
 		ExportedAt:          time.Now().UTC().Format(time.RFC3339),
-		PipelineFingerprint: redact.PipelineFingerprint(),
-		ConfigFingerprint:   redact.ConfigFingerprint(cfg),
+		PipelineFingerprint: pipelineFP,
+		ConfigFingerprint:   configFP,
 		RecordCount:         cfg.LastExtract.RecordCount,
-		AttachImages:        cfg.AttachImages,
+		AttachImages:        keepImages,
 	}
 	if cfg.LastAttest != nil && cfg.VerificationRecord != nil {
 		header.Attestation = &card.ManifestAttestion{

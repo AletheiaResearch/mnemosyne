@@ -535,6 +535,102 @@ func TestPublishIsolate_RejectsTamperedStaging(t *testing.T) {
 	}
 }
 
+// The manifest header must describe the posture the uploaded bytes were
+// produced under (extract time), not whatever config happens to be
+// loaded at publish time. Mutating attach_images / custom_redactions
+// between extract and publish must not change what the header advertises
+// for the already-redacted session bytes.
+func TestPublishIsolate_HeaderTracksExtractNotCurrentConfig(t *testing.T) {
+	shim := installHFShim(t)
+
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	seedIsolateConfig(t, cfgPath)
+
+	// Mutate the current config to advertise a different posture than
+	// the one baked into each IsolateSession.RedactionKey. A correctly
+	// implemented publish ignores this and reads posture from the key.
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	cfg.AttachImages = true
+	cfg.CustomRedactions = []string{"newly-added-after-extract"}
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	rt := &runtime{
+		configPath: cfgPath,
+		logger:     newLogger(false),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+	}
+	if _, err := runPublish(t, rt,
+		"--isolate",
+		"--publish-attestation", "I approve and authorize mnemosyne to publish and upload this archive.",
+	); err != nil {
+		t.Fatalf("publish: %v\nhf log:\n%s", err, shim.readLog(t))
+	}
+
+	manifestPath := filepath.Join(shim.uploadDir, card.ManifestFileName)
+	manifestBytes, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	header, _, err := card.ParseManifestMnemosyne(bytes.NewReader(manifestBytes))
+	if err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+
+	// Session keys in the seed are "v1:v1:sha256:cfg:strip-images".
+	if header.AttachImages {
+		t.Errorf("header.AttachImages = true; want false (derived from extract-time key, not mutated cfg.AttachImages=true)")
+	}
+	if header.PipelineFingerprint != "v1" {
+		t.Errorf("header.PipelineFingerprint = %q, want %q", header.PipelineFingerprint, "v1")
+	}
+	if header.ConfigFingerprint != "sha256:cfg" {
+		t.Errorf("header.ConfigFingerprint = %q, want %q (derived from extract-time key, not mutated cfg)", header.ConfigFingerprint, "sha256:cfg")
+	}
+}
+
+// Two IsolateSessions with different RedactionKeys can only arise from
+// resumed/interleaved extracts; publish can't emit a single coherent
+// header for them. It must fail fast with a clear re-run instruction
+// before any remote side effect.
+func TestPublishIsolate_RejectsMismatchedRedactionKeys(t *testing.T) {
+	shim := installHFShim(t)
+
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	seedIsolateConfig(t, cfgPath)
+
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	cfg.LastExtract.IsolateSessions[1].RedactionKey = "v1:v1:sha256:cfg:keep-images"
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	rt := &runtime{
+		configPath: cfgPath,
+		logger:     newLogger(false),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+	}
+	_, err = runPublish(t, rt,
+		"--isolate",
+		"--publish-attestation", "I approve and authorize mnemosyne to publish and upload this archive.",
+	)
+	if err == nil || !strings.Contains(err.Error(), "mismatched redaction keys") {
+		t.Fatalf("expected mismatched-keys error, got: %v", err)
+	}
+	if log := shim.readLog(t); strings.Contains(log, "repos create") {
+		t.Errorf("repos create must not run when preflight fails:\n%s", log)
+	}
+}
+
 func TestPublishIsolate_RequiresPriorExtract(t *testing.T) {
 	shim := installHFShim(t)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")

@@ -62,6 +62,56 @@ func RedactionKey(cfg config.Config, attachImages bool) string {
 	}, ":")
 }
 
+// ParseRedactionKey is the inverse of RedactionKey. It recovers the
+// redaction posture a session was produced under from the opaque key
+// string stored on IsolateSession, without consulting any live config.
+// Use it at publish time so the manifest header describes the bytes
+// actually being uploaded (which were redacted at extract time) rather
+// than whatever config happens to be loaded when publish runs.
+//
+// The key format is "v1:<pipeline>:<config>:<keep|strip>-images" where
+// <config> is itself "sha256:<hex>". Splitting from the right isolates
+// the image suffix; the remaining prefix is split from the left to
+// recover pipeline and config fingerprints. ok=false for empty or
+// malformed keys (unknown manifest version, wrong suffix, missing
+// fields); callers should treat !ok as a hard error rather than
+// fabricating values.
+func ParseRedactionKey(key string) (pipelineFP, configFP string, keepImages, ok bool) {
+	if key == "" {
+		return "", "", false, false
+	}
+	lastColon := strings.LastIndex(key, ":")
+	if lastColon < 0 {
+		return "", "", false, false
+	}
+	suffix := key[lastColon+1:]
+	switch suffix {
+	case "keep-images":
+		keepImages = true
+	case "strip-images":
+		keepImages = false
+	default:
+		return "", "", false, false
+	}
+	prefix := key[:lastColon]
+	// prefix = "<manifestVersion>:<pipeline>:sha256:<hex>"
+	// SplitN on ":" into 4 parts so the "sha256:<hex>" stays intact.
+	parts := strings.SplitN(prefix, ":", 4)
+	if len(parts) != 4 {
+		return "", "", false, false
+	}
+	manifestVersion := parts[0]
+	if manifestVersion != "v1" {
+		return "", "", false, false
+	}
+	pipelineFP = parts[1]
+	configFP = parts[2] + ":" + parts[3]
+	if pipelineFP == "" || !strings.HasPrefix(configFP, "sha256:") {
+		return "", "", false, false
+	}
+	return pipelineFP, configFP, keepImages, true
+}
+
 func normalizeList(input []string) []string {
 	out := make([]string, 0, len(input))
 	for _, item := range input {
