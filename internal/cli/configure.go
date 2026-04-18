@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"errors"
+
 	"github.com/spf13/cobra"
 
 	"github.com/AletheiaResearch/mnemosyne/internal/config"
@@ -60,11 +62,25 @@ func newConfigureCommand(rt *runtime) *cobra.Command {
 				if chatTemplateClear {
 					tmpl = config.ChatTemplate{}
 				}
-				if cmd.Flags().Changed("chat-template-name") {
-					tmpl.Name = chatTemplateName
+
+				nameChanged := cmd.Flags().Changed("chat-template-name")
+				fileChanged := cmd.Flags().Changed("chat-template-file")
+				if nameChanged && fileChanged &&
+					chatTemplateName != "" && chatTemplateFile != "" {
+					return errors.New("--chat-template-name and --chat-template-file are mutually exclusive; clear one before setting the other")
 				}
-				if cmd.Flags().Changed("chat-template-file") {
+
+				if nameChanged {
+					tmpl.Name = chatTemplateName
+					if chatTemplateName != "" {
+						tmpl.File = ""
+					}
+				}
+				if fileChanged {
 					tmpl.File = chatTemplateFile
+					if chatTemplateFile != "" {
+						tmpl.Name = ""
+					}
 				}
 				if cmd.Flags().Changed("chat-template-bos-token") {
 					tmpl.BOSToken = chatTemplateBOSToken
