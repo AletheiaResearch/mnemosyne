@@ -48,10 +48,17 @@ type ManifestAttestion struct {
 }
 
 // ManifestEntry describes a single session file in the dataset.
+//
+// SessionID is the format's native, stable session identifier (Codex
+// session_meta.payload.id; Claude Code filename sans extension). It is
+// stable across moves and content growth, which is how isolate dedup
+// collapses the same logical session to one entry even when the file
+// relocates on disk or gains turns between publishes.
 type ManifestEntry struct {
 	Kind         string `json:"kind"`
 	File         string `json:"file"`
 	Format       string `json:"format"`
+	SessionID    string `json:"session_id,omitempty"`
 	SourceHash   string `json:"source_hash"`
 	RedactionKey string `json:"redaction_key"`
 	RedactedHash string `json:"redacted_hash"`
@@ -144,20 +151,39 @@ func contentKey(entry ManifestEntry) string {
 	return entry.SourceHash + "|" + entry.RedactionKey + "|" + entry.RedactedHash
 }
 
+// sessionKey is the stable logical identity of a session, orthogonal to
+// its bytes. A session that gains turns AND moves on disk still shares
+// this key with its prior remote entry, so dedup can collapse them into
+// one record even when every hash has changed. Returns "" when either
+// field is missing (legacy manifest entries or formats without a native
+// id) — those callers fall back to contentKey.
+func sessionKey(entry ManifestEntry) string {
+	if entry.SessionID == "" || entry.Format == "" {
+		return ""
+	}
+	return entry.Format + "|" + entry.SessionID
+}
+
 // DiffManifestSessions compares local entries against what the remote manifest
 // already holds and decides which sessions still need to be uploaded.
 //
-// Decision per local entry:
-//  1. A remote entry exists with the same File and an identical content
+// Decision per local entry (first rule that matches wins):
+//  1. A remote entry exists with the same (SessionID, Format) logical id:
+//     - If the content tuple also matches → no upload; the local entry
+//       adopts the remote File so Merge collapses them.
+//     - If the content tuple differs → upload under the remote's File
+//       (overwriting it). The stale remote entry is claimed so it is not
+//       retained. This is how a moved-and-grown session (very common for
+//       Codex sessions aging into archived_sessions/) stays as one entry
+//       instead of accumulating.
+//  2. A remote entry exists with the same File and an identical content
 //     tuple → no upload; the local entry passes through unchanged.
-//  2. A remote entry exists with a different File but an identical
-//     content tuple → no upload. The local entry's File is *rewritten*
-//     to match the remote's so that downstream MergeManifestEntries
-//     collapses them into a single record. This is how a moved source
-//     (e.g. a Codex session aging into archived_sessions/) avoids
-//     accumulating as a duplicate in the repo.
-//  3. Otherwise → upload. Either the remote has no matching content or
-//     the content diverges (source, key, or redacted bytes changed).
+//  3. A remote entry exists with a different File but an identical
+//     content tuple → no upload. The local entry's File is rewritten
+//     to match the remote's so Merge collapses them.
+//  4. Otherwise → upload. Either the remote has no matching identity or
+//     content, or the content diverges and no logical id exists to
+//     reconcile them.
 //
 // redacted_hash participates in the comparison because the published
 // manifest advertises it for the uploaded bytes; skipping an upload
@@ -168,14 +194,19 @@ func contentKey(entry ManifestEntry) string {
 // Files applied. Callers must pass `aligned` (not the raw `local`) to
 // MergeManifestEntries and use it to resolve the upload destination for
 // entries still in `toUpload`. `toRetain` contains remote entries that
-// survive because no local entry replaces them (by File or by content).
+// survive because no local entry replaces them (by logical id, by File,
+// or by content).
 func DiffManifestSessions(local, remote []ManifestEntry) (toUpload, toRetain, aligned []ManifestEntry) {
 	remoteByFile := make(map[string]ManifestEntry, len(remote))
 	remoteByContent := make(map[string]ManifestEntry, len(remote))
+	remoteBySession := make(map[string]ManifestEntry, len(remote))
 	for _, entry := range remote {
 		remoteByFile[entry.File] = entry
 		if key := contentKey(entry); key != "||" {
 			remoteByContent[key] = entry
+		}
+		if key := sessionKey(entry); key != "" {
+			remoteBySession[key] = entry
 		}
 	}
 
@@ -184,6 +215,25 @@ func DiffManifestSessions(local, remote []ManifestEntry) (toUpload, toRetain, al
 	claimedRemoteFiles := make(map[string]struct{}, len(local))
 
 	for _, entry := range local {
+		// Rule 1: logical identity match wins over any path/content heuristic.
+		if key := sessionKey(entry); key != "" {
+			if existing, ok := remoteBySession[key]; ok {
+				if _, already := claimedRemoteFiles[existing.File]; !already {
+					contentMatches := existing.SourceHash == entry.SourceHash &&
+						existing.RedactionKey == entry.RedactionKey &&
+						existing.RedactedHash == entry.RedactedHash
+					rewritten := entry
+					rewritten.File = existing.File
+					aligned = append(aligned, rewritten)
+					claimedRemoteFiles[existing.File] = struct{}{}
+					if !contentMatches {
+						toUpload = append(toUpload, rewritten)
+					}
+					continue
+				}
+			}
+		}
+		// Rule 2: same File, identical content tuple → no upload.
 		if existing, ok := remoteByFile[entry.File]; ok &&
 			existing.SourceHash == entry.SourceHash &&
 			existing.RedactionKey == entry.RedactionKey &&
@@ -192,6 +242,7 @@ func DiffManifestSessions(local, remote []ManifestEntry) (toUpload, toRetain, al
 			claimedRemoteFiles[entry.File] = struct{}{}
 			continue
 		}
+		// Rule 3: different File, identical content tuple → adopt remote File.
 		if existing, ok := remoteByContent[contentKey(entry)]; ok && existing.File != entry.File {
 			if _, already := claimedRemoteFiles[existing.File]; !already {
 				rewritten := entry
@@ -201,6 +252,7 @@ func DiffManifestSessions(local, remote []ManifestEntry) (toUpload, toRetain, al
 				continue
 			}
 		}
+		// Rule 4: no reconciliation available → upload under local File.
 		aligned = append(aligned, entry)
 		toUpload = append(toUpload, entry)
 		claimedRemoteFiles[entry.File] = struct{}{}

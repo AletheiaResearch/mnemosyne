@@ -312,6 +312,48 @@ func TestRedact_HomePathAnonymized(t *testing.T) {
 	}
 }
 
+// The Claude Code session id is the filename (sans .jsonl extension).
+// Source parsers derive record_id the same way, and the filename is the
+// one piece of identity that survives project-directory moves.
+func TestRedactClaudecode_SessionIDFromFilename(t *testing.T) {
+	t.Parallel()
+	srcDir := t.TempDir()
+	src := filepath.Join(srcDir, "11111111-2222-3333-4444-555555555555.jsonl")
+	fixture, err := os.ReadFile(filepath.Join("testdata", "claudecode-session.jsonl"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	if err := os.WriteFile(src, fixture, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	result, err := ClaudeCode().Redact(context.Background(), src,
+		filepath.Join(t.TempDir(), "out.jsonl"),
+		Options{Pipeline: newPipeline(t), AttachImages: true})
+	if err != nil {
+		t.Fatalf("redact: %v", err)
+	}
+	if result.SessionID != "11111111-2222-3333-4444-555555555555" {
+		t.Errorf("SessionID = %q, want filename-derived uuid", result.SessionID)
+	}
+}
+
+// The Codex session id is session_meta.payload.id. It stays constant as
+// the session moves between sessions/ and archived_sessions/ directories
+// and as the file grows with new turns.
+func TestRedactCodex_SessionIDFromSessionMeta(t *testing.T) {
+	t.Parallel()
+	src := copyFixture(t, "codex-session.jsonl")
+	result, err := Codex().Redact(context.Background(), src,
+		filepath.Join(t.TempDir(), "out.jsonl"),
+		Options{Pipeline: newPipeline(t), AttachImages: true})
+	if err != nil {
+		t.Fatalf("redact: %v", err)
+	}
+	if result.SessionID != "sess-1" {
+		t.Errorf("SessionID = %q, want %q (from session_meta.payload.id)", result.SessionID, "sess-1")
+	}
+}
+
 func TestForOrigin(t *testing.T) {
 	t.Parallel()
 	for _, origin := range []string{"claudecode", "codex"} {

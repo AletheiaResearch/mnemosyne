@@ -194,6 +194,7 @@ func runIsolatePublish(cmd *cobra.Command, rt *runtime, cfg config.Config, repoI
 		localEntries = append(localEntries, card.ManifestEntry{
 			File:         session.File,
 			Format:       session.Format,
+			SessionID:    session.SessionID,
 			SourceHash:   session.SourceHash,
 			RedactionKey: session.RedactionKey,
 			RedactedHash: session.RedactedHash,

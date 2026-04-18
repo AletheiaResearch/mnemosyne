@@ -491,6 +491,137 @@ func TestPublishIsolate_SourceRelocationDoesNotDuplicate(t *testing.T) {
 	}
 }
 
+// A session that both moves on disk AND receives additional turns has
+// every hash changed AND a new File label. Without the logical session
+// id, Diff's content-tuple fallback can't match it to the remote entry,
+// so publish would upload a new file while retaining the stale remote
+// — a duplicate. With SessionID threaded through the manifest, the
+// match collapses them to one entry and the upload overwrites the
+// remote in place.
+func TestPublishIsolate_SessionMoveAndContentChangeDoesNotDuplicate(t *testing.T) {
+	shim := installHFShim(t)
+
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	_, sessions := seedIsolateConfig(t, cfgPath)
+
+	// Surface a SessionID on the seeded sessions; seedIsolateConfig
+	// predates the field and leaves it empty.
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	cfg.LastExtract.IsolateSessions[0].SessionID = "sess-a"
+	cfg.LastExtract.IsolateSessions[1].SessionID = "sess-b"
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	rt := &runtime{
+		configPath: cfgPath,
+		logger:     newLogger(false),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+	}
+	if _, err := runPublish(t, rt,
+		"--isolate",
+		"--publish-attestation", "I approve and authorize mnemosyne to publish and upload this archive.",
+	); err != nil {
+		t.Fatalf("first publish: %v", err)
+	}
+
+	// Snapshot the manifest from the first publish as the "remote".
+	remoteManifest := filepath.Join(shim.uploadDir, card.ManifestFileName)
+	manifestCopy := filepath.Join(t.TempDir(), card.ManifestFileName)
+	data, err := os.ReadFile(remoteManifest)
+	if err != nil {
+		t.Fatalf("read remote manifest: %v", err)
+	}
+	if err := os.WriteFile(manifestCopy, data, 0o644); err != nil {
+		t.Fatalf("write manifest copy: %v", err)
+	}
+	shim.setRemoteManifest(t, manifestCopy)
+	shim.clearLog(t)
+	shim.clearUploadDir(t)
+
+	// Simulate: session A moves AND grows. New File label (different
+	// hash prefix), new staging bytes, new SourceHash and RedactedHash.
+	// Same SessionID — that's the whole point of the fix.
+	newBody := []byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"a-grown"}]}}` + "\n")
+	if err := os.WriteFile(sessions[0], newBody, 0o644); err != nil {
+		t.Fatalf("grow staging: %v", err)
+	}
+	newSum := sha256.Sum256(newBody)
+	newHash := "sha256:" + hex.EncodeToString(newSum[:])
+	cfg, err = config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	cfg.LastExtract.IsolateSessions[0].File = "claudecode/aaaabbbb/a.jsonl"
+	cfg.LastExtract.IsolateSessions[0].SourceHash = newHash
+	cfg.LastExtract.IsolateSessions[0].RedactedHash = newHash
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	if _, err := runPublish(t, rt,
+		"--isolate",
+		"--publish-attestation", "I approve and authorize mnemosyne to publish and upload this archive.",
+	); err != nil {
+		t.Fatalf("second publish: %v\nhf log:\n%s", err, shim.readLog(t))
+	}
+
+	// Only the grown session should ship. Uploaded basename is a.jsonl
+	// because the upload targets the *remote* File (claudecode/a.jsonl),
+	// not the relocated local File (claudecode/aaaabbbb/a.jsonl). The
+	// shim captures uploads by basename, so the presence of a.jsonl is
+	// the signal that the remote entry was overwritten in place.
+	uploaded := shim.uploadedFiles(t)
+	uploadedSet := make(map[string]bool, len(uploaded))
+	for _, name := range uploaded {
+		uploadedSet[name] = true
+	}
+	if !uploadedSet["a.jsonl"] {
+		t.Errorf("grown session must upload (overwriting remote a.jsonl); got: %v\nhf log:\n%s", uploaded, shim.readLog(t))
+	}
+	if uploadedSet["b.jsonl"] {
+		t.Errorf("unchanged session b.jsonl must not reupload; got: %v", uploaded)
+	}
+
+	// Single manifest entry per session — no accumulation.
+	newManifestBytes, err := os.ReadFile(filepath.Join(shim.uploadDir, card.ManifestFileName))
+	if err != nil {
+		t.Fatalf("read new manifest: %v", err)
+	}
+	_, entries, err := card.ParseManifestMnemosyne(bytes.NewReader(newManifestBytes))
+	if err != nil {
+		t.Fatalf("parse new manifest: %v", err)
+	}
+	bySession := make(map[string]int, len(entries))
+	for _, entry := range entries {
+		bySession[entry.SessionID]++
+	}
+	if bySession["sess-a"] != 1 {
+		t.Errorf("sess-a should appear exactly once (accumulation would be 2); got map: %v\nentries: %+v", bySession, entries)
+	}
+	if bySession["sess-b"] != 1 {
+		t.Errorf("sess-b should appear exactly once; got map: %v", bySession)
+	}
+
+	// The sess-a entry must carry the new bytes AND the remote File (so
+	// consumers with the old URL still resolve correctly).
+	for _, entry := range entries {
+		if entry.SessionID != "sess-a" {
+			continue
+		}
+		if entry.File != "claudecode/a.jsonl" {
+			t.Errorf("sess-a entry File = %q, want remote-preserved %q", entry.File, "claudecode/a.jsonl")
+		}
+		if entry.RedactedHash != newHash {
+			t.Errorf("sess-a entry RedactedHash = %q, want new bytes %q", entry.RedactedHash, newHash)
+		}
+	}
+}
+
 func TestPublishIsolate_RejectsTamperedStaging(t *testing.T) {
 	shim := installHFShim(t)
 

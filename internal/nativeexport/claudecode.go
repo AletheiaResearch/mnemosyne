@@ -1,6 +1,10 @@
 package nativeexport
 
-import "context"
+import (
+	"context"
+	"path/filepath"
+	"strings"
+)
 
 type claudeCodeRedactor struct{}
 
@@ -11,7 +15,19 @@ func ClaudeCode() Redactor { return claudeCodeRedactor{} }
 func (claudeCodeRedactor) Format() string { return "claudecode" }
 
 func (r claudeCodeRedactor) Redact(ctx context.Context, srcPath, dstPath string, opts Options) (Result, error) {
-	return redactFile(ctx, srcPath, dstPath, r.Format(), opts, claudeCodePreProcess)
+	result, err := redactFile(ctx, srcPath, dstPath, r.Format(), opts, claudeCodePreProcess, nil)
+	if err != nil {
+		return result, err
+	}
+	// Claude Code session files are named <UUID>.jsonl; the filename is the
+	// session's stable logical id (source.go derives record_id the same way).
+	// No in-band hook is needed — the filename survives moves between
+	// project directories, which is exactly the identity we want.
+	if result.SessionID == "" {
+		base := filepath.Base(srcPath)
+		result.SessionID = strings.TrimSuffix(base, filepath.Ext(base))
+	}
+	return result, nil
 }
 
 // claudeCodePreProcess strips inline images from Claude Code message content

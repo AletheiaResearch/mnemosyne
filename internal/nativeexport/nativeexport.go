@@ -46,6 +46,7 @@ type Result struct {
 	SourceHash   string
 	RedactedHash string
 	RedactionKey string
+	SessionID    string
 	Lines        int
 	AttachImages bool
 }
@@ -76,10 +77,16 @@ func ForOrigin(origin string) (Redactor, bool) {
 // everything.
 type preProcess func(line map[string]any, opts Options) (map[string]any, bool)
 
+// sessionDetect returns the logical session id carried by a decoded line, or
+// "" when the line is not the one that names the session. redactFile adopts
+// the first non-empty value as Result.SessionID — subsequent matches are
+// ignored so the first carrier in the stream wins.
+type sessionDetect func(line map[string]any) string
+
 // redactFile performs the streaming read/walk/write and hashing shared by all
 // formats. Each format supplies a preProcess hook for its image stripping
-// logic.
-func redactFile(ctx context.Context, srcPath, dstPath, format string, opts Options, pre preProcess) (Result, error) {
+// logic and an optional sessionDetect for extracting the session id in-band.
+func redactFile(ctx context.Context, srcPath, dstPath, format string, opts Options, pre preProcess, detect sessionDetect) (Result, error) {
 	if opts.Pipeline == nil {
 		return Result{}, errors.New("nativeexport: Options.Pipeline is required")
 	}
@@ -112,6 +119,7 @@ func redactFile(ctx context.Context, srcPath, dstPath, format string, opts Optio
 	scanner.Buffer(make([]byte, 0, 1024*1024), maxLineBytes)
 
 	lines := 0
+	sessionID := ""
 	for scanner.Scan() {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
@@ -120,9 +128,12 @@ func redactFile(ctx context.Context, srcPath, dstPath, format string, opts Optio
 		if len(strings.TrimSpace(string(raw))) == 0 {
 			continue
 		}
-		rewritten, err := processLine(raw, opts, pre)
+		rewritten, foundID, err := processLine(raw, opts, pre, detect)
 		if err != nil {
 			return Result{}, fmt.Errorf("process line %d: %w", lines+1, err)
+		}
+		if sessionID == "" && foundID != "" {
+			sessionID = foundID
 		}
 		if rewritten == nil {
 			continue
@@ -155,25 +166,30 @@ func redactFile(ctx context.Context, srcPath, dstPath, format string, opts Optio
 		SourceHash:   hashValue(srcHasher),
 		RedactedHash: hashValue(dstHasher),
 		RedactionKey: opts.RedactionKey,
+		SessionID:    sessionID,
 		Lines:        lines,
 		AttachImages: opts.AttachImages,
 	}, nil
 }
 
-func processLine(raw []byte, opts Options, pre preProcess) ([]byte, error) {
+func processLine(raw []byte, opts Options, pre preProcess, detect sessionDetect) (out []byte, sessionID string, err error) {
 	var line map[string]any
-	if err := json.Unmarshal(raw, &line); err != nil {
+	if unmarshalErr := json.Unmarshal(raw, &line); unmarshalErr != nil {
 		// Pass-through for non-object lines (rare). Apply a plain text redact
 		// pass so secrets embedded in free-form lines don't leak.
 		redacted, _ := opts.Pipeline.ApplyText(string(raw))
-		return []byte(redacted), nil
+		return []byte(redacted), "", nil
+	}
+	if detect != nil {
+		sessionID = detect(line)
 	}
 	line, keep := pre(line, opts)
 	if !keep {
-		return nil, nil
+		return nil, sessionID, nil
 	}
 	walked, _ := opts.Pipeline.ApplyAny(line, "")
-	return json.Marshal(walked)
+	out, err = json.Marshal(walked)
+	return out, sessionID, err
 }
 
 func hashValue(h hash.Hash) string {

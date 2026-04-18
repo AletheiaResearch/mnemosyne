@@ -85,6 +85,11 @@
           "description": "Origin format of the session file. Matches the mnemosyne source origin.",
           "enum": ["claudecode", "codex"]
         },
+        "session_id": {
+          "type": "string",
+          "description": "Format-native, stable session identifier. For Codex: session_meta.payload.id. For Claude Code: the session file's basename sans \".jsonl\". Used by publish to reconcile sessions whose bytes grow and whose file paths move between publishes — the content tuple alone can't match a moved-and-grown session, but the session_id still does.",
+          "minLength": 1
+        },
         "source_hash": {
           "type": "string",
           "description": "SHA-256 of the raw source file bytes before redaction, as \"sha256:<hex>\".",

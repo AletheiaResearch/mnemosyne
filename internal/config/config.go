@@ -79,6 +79,7 @@ type LastExtract struct {
 type IsolateSession struct {
 	File         string `json:"file"`
 	Format       string `json:"format"`
+	SessionID    string `json:"session_id,omitempty"`
 	SourcePath   string `json:"source_path"`
 	StagingPath  string `json:"staging_path"`
 	SourceHash   string `json:"source_hash"`

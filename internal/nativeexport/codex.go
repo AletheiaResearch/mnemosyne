@@ -11,7 +11,22 @@ func Codex() Redactor { return codexRedactor{} }
 func (codexRedactor) Format() string { return "codex" }
 
 func (r codexRedactor) Redact(ctx context.Context, srcPath, dstPath string, opts Options) (Result, error) {
-	return redactFile(ctx, srcPath, dstPath, r.Format(), opts, codexPreProcess)
+	return redactFile(ctx, srcPath, dstPath, r.Format(), opts, codexPreProcess, codexSessionDetect)
+}
+
+// codexSessionDetect returns the Codex session uuid carried by the first
+// session_meta line so Result.SessionID remains stable even if the session
+// file moves (e.g. archiving from sessions/ into archived_sessions/).
+func codexSessionDetect(line map[string]any) string {
+	if kind, _ := line["type"].(string); kind != "session_meta" {
+		return ""
+	}
+	payload, ok := line["payload"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	id, _ := payload["id"].(string)
+	return id
 }
 
 // codexPreProcess strips image attachments from Codex session lines when the

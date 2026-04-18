@@ -400,6 +400,7 @@ func (a *runExtractionArgs) recordIsolate(ctx context.Context, origin, src strin
 	session := config.IsolateSession{
 		File:         format + "/" + filepath.ToSlash(relPath),
 		Format:       format,
+		SessionID:    result.SessionID,
 		SourcePath:   src,
 		StagingPath:  result.StagingPath,
 		SourceHash:   result.SourceHash,

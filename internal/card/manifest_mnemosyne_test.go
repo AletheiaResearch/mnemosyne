@@ -219,6 +219,116 @@ func TestDiffManifestSessions_ContentDivergenceStillUploads(t *testing.T) {
 	}
 }
 
+// A session that both moves AND gains turns between publishes has every
+// hash changed and a new File label. Without a logical identity, Diff
+// would upload it as a new entry alongside the stale remote, duplicating
+// the session. With SessionID, the matching remote entry is overwritten
+// in place (same File, new bytes) and the stale entry is not retained.
+func TestDiffManifestSessions_SessionIDMatchAdoptsRemotePathOnContentChange(t *testing.T) {
+	t.Parallel()
+	local := []ManifestEntry{
+		{
+			File: "codex/NEW/sess-1.jsonl", Format: "codex", SessionID: "sess-1",
+			SourceHash: "sha256:NEWsrc", RedactionKey: "v1:keep", RedactedHash: "sha256:NEWred",
+		},
+	}
+	remote := []ManifestEntry{
+		{
+			File: "codex/OLD/sess-1.jsonl", Format: "codex", SessionID: "sess-1",
+			SourceHash: "sha256:OLDsrc", RedactionKey: "v1:keep", RedactedHash: "sha256:OLDred",
+		},
+	}
+	toUpload, toRetain, aligned := DiffManifestSessions(local, remote)
+	if len(toUpload) != 1 {
+		t.Fatalf("must upload the grown session; got: %+v", toUpload)
+	}
+	if toUpload[0].File != "codex/OLD/sess-1.jsonl" {
+		t.Errorf("upload must overwrite the remote File so dedup collapses; got File=%q", toUpload[0].File)
+	}
+	if len(toRetain) != 0 {
+		t.Errorf("stale remote must be claimed, not retained; got: %+v", toRetain)
+	}
+	if len(aligned) != 1 || aligned[0].File != "codex/OLD/sess-1.jsonl" {
+		t.Fatalf("aligned must adopt remote File; got: %+v", aligned)
+	}
+	merged := MergeManifestEntries(aligned, toRetain)
+	if len(merged) != 1 {
+		t.Fatalf("merged should collapse to one entry; got %d: %+v", len(merged), merged)
+	}
+	if merged[0].SourceHash != "sha256:NEWsrc" || merged[0].RedactedHash != "sha256:NEWred" {
+		t.Errorf("merged entry must advertise the new bytes; got: %+v", merged[0])
+	}
+}
+
+// SessionID match beats a coincidental content-tuple match against a
+// different remote. If two remotes exist — one sharing SessionID but
+// not content, one sharing content but not SessionID — the session-id
+// match wins, because SessionID is the stable logical identity while a
+// content match against an unrelated remote is a collision, not an
+// identity.
+func TestDiffManifestSessions_SessionIDWinsOverContentWhenBothPossible(t *testing.T) {
+	t.Parallel()
+	local := []ManifestEntry{
+		{
+			File: "codex/NEW/sess-1.jsonl", Format: "codex", SessionID: "sess-1",
+			SourceHash: "sha256:content", RedactionKey: "v1:keep", RedactedHash: "sha256:bytes",
+		},
+	}
+	remote := []ManifestEntry{
+		{
+			File: "codex/OLD/sess-1.jsonl", Format: "codex", SessionID: "sess-1",
+			SourceHash: "sha256:different", RedactionKey: "v1:keep", RedactedHash: "sha256:different",
+		},
+		{
+			File: "codex/OLD/other.jsonl", Format: "codex", SessionID: "sess-other",
+			SourceHash: "sha256:content", RedactionKey: "v1:keep", RedactedHash: "sha256:bytes",
+		},
+	}
+	toUpload, toRetain, aligned := DiffManifestSessions(local, remote)
+	if len(aligned) != 1 || aligned[0].File != "codex/OLD/sess-1.jsonl" {
+		t.Fatalf("aligned must follow SessionID match, not content match; got: %+v", aligned)
+	}
+	if len(toUpload) != 1 || toUpload[0].File != "codex/OLD/sess-1.jsonl" {
+		t.Errorf("upload must target the SessionID-matched remote; got: %+v", toUpload)
+	}
+	// The other remote (content-match, different SessionID) stays retained
+	// because it was never claimed. This matters: retaining it advertises
+	// its own bytes rather than silently inheriting ours.
+	if len(toRetain) != 1 || toRetain[0].SessionID != "sess-other" {
+		t.Errorf("content-match remote with different SessionID must be retained; got: %+v", toRetain)
+	}
+}
+
+// Legacy remote entries (no SessionID) must still reconcile with local
+// entries via the content-tuple fallback. This guards against a flag day
+// for datasets published before SessionID existed.
+func TestDiffManifestSessions_ContentMatchStillFiresForLegacyRemote(t *testing.T) {
+	t.Parallel()
+	local := []ManifestEntry{
+		{
+			File: "claudecode/NEW/x.jsonl", Format: "claudecode", SessionID: "uuid",
+			SourceHash: "sha256:x", RedactionKey: "v1:keep", RedactedHash: "sha256:xx",
+		},
+	}
+	remote := []ManifestEntry{
+		// No SessionID — e.g. written before the field existed.
+		{
+			File: "claudecode/OLD/x.jsonl", Format: "claudecode",
+			SourceHash: "sha256:x", RedactionKey: "v1:keep", RedactedHash: "sha256:xx",
+		},
+	}
+	toUpload, toRetain, aligned := DiffManifestSessions(local, remote)
+	if len(toUpload) != 0 {
+		t.Errorf("legacy content match must still skip upload; got: %+v", toUpload)
+	}
+	if len(toRetain) != 0 {
+		t.Errorf("legacy remote must be claimed via content fallback; got: %+v", toRetain)
+	}
+	if aligned[0].File != "claudecode/OLD/x.jsonl" {
+		t.Errorf("aligned must adopt legacy remote File; got: %+v", aligned[0])
+	}
+}
+
 func TestMergeManifestEntries_LocalWinsOnCollision(t *testing.T) {
 	t.Parallel()
 	local := []ManifestEntry{
