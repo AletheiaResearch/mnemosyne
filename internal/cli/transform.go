@@ -14,9 +14,16 @@ import (
 )
 
 func newTransformCommand(rt *runtime) *cobra.Command {
-	var input string
-	var output string
-	var format string
+	var (
+		input               string
+		output              string
+		format              string
+		templateName        string
+		templateFile        string
+		bosToken            string
+		eosToken            string
+		addGenerationPrompt bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "transform",
@@ -28,9 +35,14 @@ func newTransformCommand(rt *runtime) *cobra.Command {
 			if output == "" {
 				return errors.New("transform requires --output")
 			}
-			serializer := serialize.Lookup(format)
-			if serializer == nil {
-				return errors.New("unknown serializer")
+
+			serializer, err := selectSerializer(format, templateName, templateFile, serialize.TemplateOptions{
+				BOSToken:            bosToken,
+				EOSToken:            eosToken,
+				AddGenerationPrompt: addGenerationPrompt,
+			})
+			if err != nil {
+				return err
 			}
 
 			in, err := os.Open(input)
@@ -52,7 +64,29 @@ func newTransformCommand(rt *runtime) *cobra.Command {
 	cmd.Flags().StringVar(&input, "input", "", "path to canonical JSONL")
 	cmd.Flags().StringVar(&output, "output", "", "path to transformed output")
 	cmd.Flags().StringVar(&format, "format", "canonical", "serializer to use")
+	cmd.Flags().StringVar(&templateName, "template-name", "", "render through a builtin chat template (e.g. chatml, zephyr, vicuna)")
+	cmd.Flags().StringVar(&templateFile, "template-file", "", "render through a chat template loaded from this file")
+	cmd.Flags().StringVar(&bosToken, "bos-token", "", "value exposed to templates as .BOSToken")
+	cmd.Flags().StringVar(&eosToken, "eos-token", "", "value exposed to templates as .EOSToken")
+	cmd.Flags().BoolVar(&addGenerationPrompt, "add-generation-prompt", false, "set .AddGenerationPrompt to true for template rendering")
 	return cmd
+}
+
+func selectSerializer(format, templateName, templateFile string, opts serialize.TemplateOptions) (serialize.Serializer, error) {
+	if templateName != "" && templateFile != "" {
+		return nil, errors.New("--template-name and --template-file are mutually exclusive")
+	}
+	if templateName != "" {
+		return serialize.NewBuiltinTemplate(templateName, opts)
+	}
+	if templateFile != "" {
+		return serialize.NewFileTemplate(templateFile, opts)
+	}
+	serializer := serialize.Lookup(format)
+	if serializer == nil {
+		return nil, errors.New("unknown serializer")
+	}
+	return serializer, nil
 }
 
 func transformRecords(in io.Reader, out io.Writer, serializer serialize.Serializer) error {
