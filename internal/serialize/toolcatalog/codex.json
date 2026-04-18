@@ -1,0 +1,75 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "shell",
+      "description": "Execute a shell command and return stdout, stderr, and exit status.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "array",
+            "description": "Argv-style command to execute",
+            "items": {"type": "string"}
+          },
+          "workdir": {"type": "string", "description": "Working directory for the command"},
+          "timeout_ms": {"type": "number", "description": "Optional timeout in milliseconds"}
+        },
+        "required": ["command"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "apply_patch",
+      "description": "Apply a unified-diff patch to the working tree.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "input": {"type": "string", "description": "Patch body in apply_patch envelope syntax"}
+        },
+        "required": ["input"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "view_image",
+      "description": "Attach a local image file to the conversation context.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string", "description": "Absolute path to the image"}
+        },
+        "required": ["path"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "update_plan",
+      "description": "Replace the agent's internal plan/todo list.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "explanation": {"type": "string", "description": "Why the plan changed"},
+          "plan": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "step": {"type": "string"},
+                "status": {"type": "string"}
+              },
+              "required": ["step", "status"]
+            }
+          }
+        },
+        "required": ["plan"]
+      }
+    }
+  }
+]
