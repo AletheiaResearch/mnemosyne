@@ -1,0 +1,322 @@
+package nativeexport
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/AletheiaResearch/mnemosyne/internal/redact"
+)
+
+const plantedImageB64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO6dD4oAAAAASUVORK5CYII="
+
+// plantedSecrets lists detector-scope secrets planted in the fixtures; these
+// must not survive redaction. Paths like /Users/nejc/... are intentionally
+// excluded — path anonymization is HOME-relative and runtime-dependent; those
+// strings are only rewritten when the runtime HOME matches their prefix.
+var plantedSecrets = []string{
+	"alice@contoso.dev",
+	"sk-abcdefghijklmnopqrstuvwxyz0123",
+	"ghp_abcdefghijklmnopqrstuvwxyz0123AB",
+}
+
+func newPipeline(t *testing.T) *redact.Pipeline {
+	t.Helper()
+	p, err := redact.New(redact.Options{})
+	if err != nil {
+		t.Fatalf("redact.New: %v", err)
+	}
+	return p
+}
+
+func fileHash(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+func copyFixture(t *testing.T, name string) string {
+	t.Helper()
+	src := filepath.Join("testdata", name)
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("read fixture %s: %v", src, err)
+	}
+	dir := t.TempDir()
+	dst := filepath.Join(dir, name)
+	if err := os.WriteFile(dst, data, 0o644); err != nil {
+		t.Fatalf("write fixture copy: %v", err)
+	}
+	return dst
+}
+
+func readJSONL(t *testing.T, path string) []map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	out := make([]map[string]any, 0)
+	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(line), &obj); err != nil {
+			t.Fatalf("unmarshal %q: %v", line, err)
+		}
+		out = append(out, obj)
+	}
+	return out
+}
+
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func assertNoSecrets(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	text := string(data)
+	for _, secret := range plantedSecrets {
+		if strings.Contains(text, secret) {
+			t.Errorf("output still contains secret %q", secret)
+		}
+	}
+	if !strings.Contains(text, redact.PlaceholderMarker) {
+		t.Errorf("output missing placeholder marker %q", redact.PlaceholderMarker)
+	}
+}
+
+type fixtureCase struct {
+	name     string
+	fixture  string
+	redactor Redactor
+}
+
+func fixtureCases() []fixtureCase {
+	return []fixtureCase{
+		{"claudecode", "claudecode-session.jsonl", ClaudeCode()},
+	}
+}
+
+func TestRedact_SourceByteIdentical(t *testing.T) {
+	t.Parallel()
+	for _, tc := range fixtureCases() {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			src := copyFixture(t, tc.fixture)
+			before := fileHash(t, src)
+			dst := filepath.Join(t.TempDir(), "out.jsonl")
+			_, err := tc.redactor.Redact(context.Background(), src, dst, Options{
+				Pipeline:     newPipeline(t),
+				AttachImages: true,
+			})
+			if err != nil {
+				t.Fatalf("redact: %v", err)
+			}
+			if after := fileHash(t, src); after != before {
+				t.Fatalf("source file mutated: before=%s after=%s", before, after)
+			}
+		})
+	}
+}
+
+func TestRedact_SchemaKeyPreservation(t *testing.T) {
+	t.Parallel()
+	for _, tc := range fixtureCases() {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			src := copyFixture(t, tc.fixture)
+			dst := filepath.Join(t.TempDir(), "out.jsonl")
+			_, err := tc.redactor.Redact(context.Background(), src, dst, Options{
+				Pipeline:     newPipeline(t),
+				AttachImages: true,
+			})
+			if err != nil {
+				t.Fatalf("redact: %v", err)
+			}
+			srcLines := readJSONL(t, src)
+			dstLines := readJSONL(t, dst)
+			if len(srcLines) != len(dstLines) {
+				t.Fatalf("line count: src=%d dst=%d", len(srcLines), len(dstLines))
+			}
+			for i := range srcLines {
+				if !reflect.DeepEqual(sortedKeys(srcLines[i]), sortedKeys(dstLines[i])) {
+					t.Errorf("line %d key set changed: src=%v dst=%v",
+						i, sortedKeys(srcLines[i]), sortedKeys(dstLines[i]))
+				}
+			}
+		})
+	}
+}
+
+func TestRedact_KeepImages(t *testing.T) {
+	t.Parallel()
+	for _, tc := range fixtureCases() {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			src := copyFixture(t, tc.fixture)
+			dst := filepath.Join(t.TempDir(), "out.jsonl")
+			_, err := tc.redactor.Redact(context.Background(), src, dst, Options{
+				Pipeline:     newPipeline(t),
+				AttachImages: true,
+			})
+			if err != nil {
+				t.Fatalf("redact: %v", err)
+			}
+			data, err := os.ReadFile(dst)
+			if err != nil {
+				t.Fatalf("read dst: %v", err)
+			}
+			if !strings.Contains(string(data), plantedImageB64) {
+				t.Errorf("AttachImages=true should preserve base64 payload")
+			}
+		})
+	}
+}
+
+func TestRedact_StripImages(t *testing.T) {
+	t.Parallel()
+	for _, tc := range fixtureCases() {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			src := copyFixture(t, tc.fixture)
+			dst := filepath.Join(t.TempDir(), "out.jsonl")
+			_, err := tc.redactor.Redact(context.Background(), src, dst, Options{
+				Pipeline:     newPipeline(t),
+				AttachImages: false,
+			})
+			if err != nil {
+				t.Fatalf("redact: %v", err)
+			}
+			data, err := os.ReadFile(dst)
+			if err != nil {
+				t.Fatalf("read dst: %v", err)
+			}
+			text := string(data)
+			if strings.Contains(text, plantedImageB64) {
+				t.Errorf("AttachImages=false should strip base64 payload")
+			}
+			if strings.Contains(text, `"type":"image"`) || strings.Contains(text, `"type":"input_image"`) {
+				t.Errorf("image-typed blocks should be absent")
+			}
+		})
+	}
+}
+
+func TestRedact_Secrets(t *testing.T) {
+	t.Parallel()
+	for _, tc := range fixtureCases() {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			src := copyFixture(t, tc.fixture)
+			dst := filepath.Join(t.TempDir(), "out.jsonl")
+			_, err := tc.redactor.Redact(context.Background(), src, dst, Options{
+				Pipeline:     newPipeline(t),
+				AttachImages: true,
+			})
+			if err != nil {
+				t.Fatalf("redact: %v", err)
+			}
+			assertNoSecrets(t, dst)
+		})
+	}
+}
+
+func TestRedact_HashStability(t *testing.T) {
+	t.Parallel()
+	for _, tc := range fixtureCases() {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			src := copyFixture(t, tc.fixture)
+			dir := t.TempDir()
+			opts := Options{Pipeline: newPipeline(t), AttachImages: false, RedactionKey: "v1:test"}
+			first, err := tc.redactor.Redact(context.Background(), src, filepath.Join(dir, "a.jsonl"), opts)
+			if err != nil {
+				t.Fatalf("first redact: %v", err)
+			}
+			second, err := tc.redactor.Redact(context.Background(), src, filepath.Join(dir, "b.jsonl"), opts)
+			if err != nil {
+				t.Fatalf("second redact: %v", err)
+			}
+			if first.RedactedHash != second.RedactedHash {
+				t.Fatalf("redacted hash unstable: %s vs %s", first.RedactedHash, second.RedactedHash)
+			}
+			if first.SourceHash != second.SourceHash {
+				t.Fatalf("source hash differs: %s vs %s", first.SourceHash, second.SourceHash)
+			}
+			if first.Format != tc.redactor.Format() {
+				t.Errorf("format %q want %q", first.Format, tc.redactor.Format())
+			}
+			if first.RedactionKey != "v1:test" {
+				t.Errorf("redaction key = %q", first.RedactionKey)
+			}
+			if first.Lines <= 0 {
+				t.Errorf("expected positive line count, got %d", first.Lines)
+			}
+		})
+	}
+}
+
+func TestRedact_HomePathAnonymized(t *testing.T) {
+	// Path anonymization only fires when HOME matches the planted prefix, so
+	// stub HOME to the fixture's user before constructing the pipeline.
+	t.Setenv("HOME", "/Users/nejc")
+	for _, tc := range fixtureCases() {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			src := copyFixture(t, tc.fixture)
+			dst := filepath.Join(t.TempDir(), "out.jsonl")
+			_, err := tc.redactor.Redact(context.Background(), src, dst, Options{
+				Pipeline:     newPipeline(t),
+				AttachImages: true,
+			})
+			if err != nil {
+				t.Fatalf("redact: %v", err)
+			}
+			data, err := os.ReadFile(dst)
+			if err != nil {
+				t.Fatalf("read dst: %v", err)
+			}
+			if strings.Contains(string(data), "/Users/nejc/") {
+				t.Errorf("home-relative path should be anonymized")
+			}
+		})
+	}
+}
+
+func TestForOrigin(t *testing.T) {
+	t.Parallel()
+	if _, ok := ForOrigin("claudecode"); !ok {
+		t.Errorf("expected handler for claudecode")
+	}
+	if _, ok := ForOrigin("cursor"); ok {
+		t.Errorf("cursor should not have a native handler yet")
+	}
+}
