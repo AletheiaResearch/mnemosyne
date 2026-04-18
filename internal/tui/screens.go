@@ -106,9 +106,10 @@ func newScreen(key screenKey, configPath string) tea.Model {
 	case screenRunlog:
 		return newRunlogScreen(configPath)
 	case screenConfigure:
+		tmpl := cfg.ChatTemplateValue()
 		return &formScreen{
 			title:      "Configure",
-			intro:      "Edit persisted scope, dataset target, exclusions, redactions, and handles. Use comma-separated values for list fields.",
+			intro:      "Edit persisted scope, dataset target, exclusions, redactions, handles, and transform chat-template defaults. Use comma-separated values for list fields.",
 			configPath: configPath,
 			fields: []formField{
 				textField("Scope", cfg.OriginScope, "all"),
@@ -117,6 +118,11 @@ func newScreen(key screenKey, configPath string) tea.Model {
 				textField("Literal Redactions", strings.Join(cfg.CustomRedactions, ", "), "secret-token"),
 				textField("Handles", strings.Join(cfg.CustomHandles, ", "), "octocat"),
 				boolField("Confirm Scope", cfg.ScopeConfirmed),
+				textField("Chat Template", tmpl.Name, "chatml, zephyr, vicuna"),
+				textField("Chat Template File", tmpl.File, "path/to/custom.tmpl"),
+				textField("BOS Token", tmpl.BOSToken, "<s>"),
+				textField("EOS Token", tmpl.EOSToken, "</s>"),
+				boolField("Add Generation Prompt", tmpl.AddGenerationPrompt),
 			},
 			buildArgs: func(s *formScreen) []string {
 				args := []string{"configure"}
@@ -131,6 +137,15 @@ func newScreen(key screenKey, configPath string) tea.Model {
 				args = appendListFlags(args, "--handle", splitCSV(s.fields[4].Value()))
 				if s.fields[5].enabled {
 					args = append(args, "--confirm-scope")
+				}
+				args = append(args, "--chat-template-name", strings.TrimSpace(s.fields[6].Value()))
+				args = append(args, "--chat-template-file", strings.TrimSpace(s.fields[7].Value()))
+				args = append(args, "--chat-template-bos-token", s.fields[8].Value())
+				args = append(args, "--chat-template-eos-token", s.fields[9].Value())
+				if s.fields[10].enabled {
+					args = append(args, "--chat-template-add-generation-prompt=true")
+				} else {
+					args = append(args, "--chat-template-add-generation-prompt=false")
 				}
 				return args
 			},
@@ -228,14 +243,20 @@ func newScreen(key screenKey, configPath string) tea.Model {
 			},
 		}
 	case screenTransform:
+		tmpl := cfg.ChatTemplateValue()
 		return &formScreen{
 			title:      "Transform",
-			intro:      "Transform canonical JSONL into another serializer format.",
+			intro:      "Transform canonical JSONL into another serializer format. Chat-template fields default to persisted configure values and override --format when set.",
 			configPath: configPath,
 			fields: []formField{
 				textField("Input Path", "", "exports/mnemosyne.jsonl"),
 				textField("Output Path", "", "exports/mnemosyne-flat.jsonl"),
 				textField("Format", "canonical", "canonical"),
+				textField("Chat Template", tmpl.Name, "chatml, zephyr, vicuna"),
+				textField("Chat Template File", tmpl.File, "path/to/custom.tmpl"),
+				textField("BOS Token", tmpl.BOSToken, "<s>"),
+				textField("EOS Token", tmpl.EOSToken, "</s>"),
+				boolField("Add Generation Prompt", tmpl.AddGenerationPrompt),
 			},
 			buildArgs: func(s *formScreen) []string {
 				args := []string{"transform"}
@@ -247,6 +268,25 @@ func newScreen(key screenKey, configPath string) tea.Model {
 				}
 				if value := strings.TrimSpace(s.fields[2].Value()); value != "" {
 					args = append(args, "--format", value)
+				}
+				if value := strings.TrimSpace(s.fields[3].Value()); value != "" {
+					args = append(args, "--template-name", value)
+				}
+				if value := strings.TrimSpace(s.fields[4].Value()); value != "" {
+					args = append(args, "--template-file", value)
+				}
+				// Token and generation-prompt flags are emitted unconditionally
+				// so clearing a field or toggling the checkbox off in the TUI
+				// actually overrides a persisted Configure default for this
+				// run. The CLI resolver only falls back to persisted config
+				// when the flag wasn't Changed, so gating on non-empty here
+				// would silently ignore the TUI's intent.
+				args = append(args, "--bos-token", s.fields[5].Value())
+				args = append(args, "--eos-token", s.fields[6].Value())
+				if s.fields[7].enabled {
+					args = append(args, "--add-generation-prompt=true")
+				} else {
+					args = append(args, "--add-generation-prompt=false")
 				}
 				return args
 			},

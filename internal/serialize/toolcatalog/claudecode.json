@@ -1,0 +1,226 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "Bash",
+      "description": "Execute a shell command in a persistent shell session.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {"type": "string", "description": "The shell command to run"},
+          "description": {"type": "string", "description": "Short description of what the command does"},
+          "run_in_background": {"type": "boolean", "description": "If true, run asynchronously and return a handle"},
+          "timeout": {"type": "number", "description": "Optional timeout in milliseconds"}
+        },
+        "required": ["command"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "Read",
+      "description": "Read a file from disk (supports images, PDFs, and notebooks).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "file_path": {"type": "string", "description": "Absolute path to the file"},
+          "limit": {"type": "number", "description": "Max number of lines to read"},
+          "offset": {"type": "number", "description": "Line number to start reading from"}
+        },
+        "required": ["file_path"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "Edit",
+      "description": "Replace an exact string in a file with another.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "file_path": {"type": "string", "description": "Absolute path to the file"},
+          "old_string": {"type": "string", "description": "The text to replace (must be unique unless replace_all is true)"},
+          "new_string": {"type": "string", "description": "The replacement text"},
+          "replace_all": {"type": "boolean", "description": "Replace every occurrence"}
+        },
+        "required": ["file_path", "old_string", "new_string"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "Write",
+      "description": "Create or overwrite a file with the given contents.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "file_path": {"type": "string", "description": "Absolute path to the file"},
+          "content": {"type": "string", "description": "Full contents to write"}
+        },
+        "required": ["file_path", "content"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "Glob",
+      "description": "Find files matching a glob pattern.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pattern": {"type": "string", "description": "Glob pattern, e.g. src/**/*.ts"},
+          "path": {"type": "string", "description": "Root directory for the search"}
+        },
+        "required": ["pattern"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "Grep",
+      "description": "Search file contents using ripgrep-style regular expressions.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pattern": {"type": "string", "description": "Regex to search for"},
+          "path": {"type": "string", "description": "File or directory to search"},
+          "glob": {"type": "string", "description": "Glob pattern to filter files"},
+          "type": {"type": "string", "description": "File type name (e.g. js, py, go)"},
+          "output_mode": {"type": "string", "description": "content, files_with_matches, or count"},
+          "-i": {"type": "boolean", "description": "Case-insensitive match"},
+          "-n": {"type": "boolean", "description": "Include line numbers"},
+          "-A": {"type": "number", "description": "Lines of trailing context"},
+          "-B": {"type": "number", "description": "Lines of leading context"},
+          "-C": {"type": "number", "description": "Lines of surrounding context"},
+          "multiline": {"type": "boolean", "description": "Enable multiline matching"},
+          "head_limit": {"type": "number", "description": "Cap output to the first N entries"}
+        },
+        "required": ["pattern"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "NotebookEdit",
+      "description": "Edit a Jupyter notebook cell.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "notebook_path": {"type": "string", "description": "Absolute path to the notebook"},
+          "cell_id": {"type": "string", "description": "Target cell identifier"},
+          "new_source": {"type": "string", "description": "New cell source"},
+          "cell_type": {"type": "string", "description": "code or markdown"},
+          "edit_mode": {"type": "string", "description": "replace, insert, or delete"}
+        },
+        "required": ["notebook_path", "new_source"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "WebFetch",
+      "description": "Fetch a URL and summarize or extract content per a prompt.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {"type": "string", "description": "The URL to fetch"},
+          "prompt": {"type": "string", "description": "Instruction describing what to extract"}
+        },
+        "required": ["url", "prompt"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "WebSearch",
+      "description": "Search the web for a query.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {"type": "string", "description": "Search query"},
+          "allowed_domains": {"type": "array", "items": {"type": "string"}},
+          "blocked_domains": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["query"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "TodoWrite",
+      "description": "Create or update the agent's persistent todo list.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "todos": {
+            "type": "array",
+            "description": "Full replacement list of todos",
+            "items": {
+              "type": "object",
+              "properties": {
+                "content": {"type": "string"},
+                "activeForm": {"type": "string"},
+                "status": {"type": "string", "description": "pending, in_progress, or completed"}
+              },
+              "required": ["content", "status"]
+            }
+          }
+        },
+        "required": ["todos"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "Task",
+      "description": "Launch a subagent for a complex, multi-step task.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "description": {"type": "string", "description": "Short description of the task"},
+          "prompt": {"type": "string", "description": "Full briefing for the subagent"},
+          "subagent_type": {"type": "string", "description": "Agent type (e.g. Explore, Plan, general-purpose)"}
+        },
+        "required": ["description", "prompt"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "SlashCommand",
+      "description": "Invoke a registered slash command.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {"type": "string", "description": "Command in the form /name with optional args"}
+        },
+        "required": ["command"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ExitPlanMode",
+      "description": "Exit plan mode and return the proposed plan.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "plan": {"type": "string", "description": "The plan content in markdown"}
+        },
+        "required": ["plan"]
+      }
+    }
+  }
+]

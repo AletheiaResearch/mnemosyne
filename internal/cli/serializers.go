@@ -22,3 +22,25 @@ func newSerializersCommand() *cobra.Command {
 		},
 	}
 }
+
+func newTemplatesCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "templates",
+		Short: "List built-in chat templates available to transform",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			names := serialize.BuiltinTemplateNames()
+			rows := make([]map[string]string, 0, len(names))
+			for _, name := range names {
+				tmpl, err := serialize.NewBuiltinTemplate(name, serialize.TemplateOptions{})
+				if err != nil {
+					continue
+				}
+				rows = append(rows, map[string]string{
+					"name":        name,
+					"description": tmpl.Description(),
+				})
+			}
+			return printJSON(cmd.OutOrStdout(), rows)
+		},
+	}
+}

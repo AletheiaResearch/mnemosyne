@@ -34,7 +34,27 @@ type Config struct {
 	VerificationRecord     *VerificationRecord        `json:"verification_record,omitempty"`
 	LastAttest             *LastAttest                `json:"last_attest,omitempty"`
 	PublicationAttestation string                     `json:"publication_attestation,omitempty"`
+	ChatTemplate           *ChatTemplate              `json:"chat_template,omitempty"`
 	Unknown                map[string]json.RawMessage `json:"-"`
+}
+
+type ChatTemplate struct {
+	Name                string `json:"name,omitempty"`
+	File                string `json:"file,omitempty"`
+	BOSToken            string `json:"bos_token,omitempty"`
+	EOSToken            string `json:"eos_token,omitempty"`
+	AddGenerationPrompt bool   `json:"add_generation_prompt,omitempty"`
+}
+
+func (t ChatTemplate) IsEmpty() bool {
+	return t.Name == "" && t.File == "" && t.BOSToken == "" && t.EOSToken == "" && !t.AddGenerationPrompt
+}
+
+func (c Config) ChatTemplateValue() ChatTemplate {
+	if c.ChatTemplate == nil {
+		return ChatTemplate{}
+	}
+	return *c.ChatTemplate
 }
 
 type LastExtract struct {
@@ -122,7 +142,7 @@ func Load(path string) (Config, error) {
 		case "destination_repo", "origin_scope", "excluded_groupings", "custom_redactions",
 			"custom_handles", "scope_confirmed", "phase_marker", "last_extract",
 			"reviewer_statements", "verification_record", "last_attest",
-			"publication_attestation":
+			"publication_attestation", "chat_template":
 		default:
 			cfg.Unknown[key] = value
 		}
