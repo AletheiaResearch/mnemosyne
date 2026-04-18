@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/AletheiaResearch/mnemosyne/internal/schema"
@@ -242,8 +243,12 @@ func TestExtractSkipsFilesNotMatchingGrouping(t *testing.T) {
 	}
 }
 
-func TestExtractReportsWarningsOnMalformedFile(t *testing.T) {
+func TestExtractReportsWarningsOnUnreadableFile(t *testing.T) {
 	t.Parallel()
+
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses file permissions; cannot force parseFile error")
+	}
 
 	src, active, _ := newCodexSource(t)
 
@@ -251,13 +256,14 @@ func TestExtractReportsWarningsOnMalformedFile(t *testing.T) {
 		{"type": "session_meta", "timestamp": "2026-04-17T10:00:00Z", "payload": map[string]any{"id": "good", "cwd": "/tmp/good"}},
 		{"type": "event_msg", "timestamp": "2026-04-17T10:00:01Z", "payload": map[string]any{"type": "user_message", "message": "hi"}},
 	})
-	// A file that isn't valid UTF-8 JSONL (the parseFile swallows JSON errors per-line, so instead
-	// we check that an unreadable file produces a warning via the grouping miss path — codex's
-	// parseFile returns nil error for bad lines). Use an empty grouping id ("unknown") with a file
-	// whose probe returns "" so it still gets grouped there.
-	writeJSONL(t, filepath.Join(active, "empty.jsonl"), []map[string]any{
-		{"type": "event_msg", "timestamp": "2026-04-17T10:00:00Z", "payload": map[string]any{"type": "token_count", "info": map[string]any{}}},
-	})
+
+	// Force parseFile to error by making the second .jsonl unreadable; CollectFiles still
+	// includes it (extension match is name-only), so os.Open fails with EACCES inside
+	// ReadJSONLines and Extract dispatches through the ReportWarning branch.
+	unreadable := filepath.Join(active, "unreadable.jsonl")
+	if err := os.WriteFile(unreadable, []byte(`{"type":"session_meta","payload":{"id":"bad","cwd":"/tmp/good"}}`), 0o000); err != nil {
+		t.Fatal(err)
+	}
 
 	var warnings []string
 	ctx := source.ExtractionContext{Warn: func(msg string) { warnings = append(warnings, msg) }}
@@ -274,8 +280,21 @@ func TestExtractReportsWarningsOnMalformedFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(records) != 1 {
-		t.Fatalf("expected good record, got %d", len(records))
+	if len(records) != 1 || records[0].RecordID != "good" {
+		t.Fatalf("expected good record to still emit, got %+v", records)
+	}
+	if len(warnings) == 0 {
+		t.Fatalf("expected warning for unreadable file, got none")
+	}
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "codex skipped") && strings.Contains(w, "unreadable.jsonl") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected 'codex skipped <path>' warning for unreadable.jsonl, got %+v", warnings)
 	}
 }
 
