@@ -6,7 +6,11 @@ import (
 	"slices"
 	"strings"
 
+	thdet "github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
+
 	"github.com/AletheiaResearch/mnemosyne/internal/config"
+	"github.com/AletheiaResearch/mnemosyne/internal/redact/detectors"
+	_ "github.com/AletheiaResearch/mnemosyne/internal/redact/detectors/posthog"
 	"github.com/AletheiaResearch/mnemosyne/internal/schema"
 )
 
@@ -16,9 +20,16 @@ type Options struct {
 	CustomRedactions []string
 	CustomHandles    []string
 	// VerifySecrets toggles live verification against provider APIs for
-	// detectors that support it (currently: PostHog). When false the
-	// pipeline stays fully offline.
+	// detectors that support it. When false the pipeline stays fully
+	// offline — matches are still redacted via their regex hits.
 	VerifySecrets bool
+	// Detectors, when non-nil, overrides the detector set the
+	// trufflehog runner uses. Production callers leave this unset so the
+	// pipeline gets defaults.DefaultDetectors() plus every provider
+	// scanner registered via the detectors registry; tests pass a
+	// curated slice (usually pointing at an httptest.Server) to avoid
+	// touching real provider APIs.
+	Detectors []thdet.Detector
 }
 
 type Pipeline struct {
@@ -43,10 +54,15 @@ func New(opts Options) (*Pipeline, error) {
 	}
 	slices.Sort(literals)
 
+	ds := opts.Detectors
+	if ds == nil {
+		ds = detectors.All()
+	}
+
 	return &Pipeline{
 		anonymizer: anonymizer,
 		detector:   NewDetector(),
-		trufflehog: newTrufflehogRunner(PostHogDetectors(), opts.VerifySecrets),
+		trufflehog: newTrufflehogRunner(ds, opts.VerifySecrets),
 		literals:   literals,
 	}, nil
 }
@@ -63,6 +79,7 @@ func FromConfigWithOptions(cfg config.Config, extra Options) (*Pipeline, error) 
 		CustomRedactions: cfg.CustomRedactions,
 		CustomHandles:    cfg.CustomHandles,
 		VerifySecrets:    extra.VerifySecrets,
+		Detectors:        extra.Detectors,
 	})
 }
 
