@@ -104,21 +104,41 @@ func RenderIsolateDescription(header ManifestHeader, entries []ManifestEntry, li
 		totalLines += entry.Lines
 	}
 
+	keySummary := SummarizeRedactionKeys(entries)
 	builder.WriteString("## Summary\n\n")
 	builder.WriteString("- Sessions: " + itoa(len(entries)) + "\n")
 	builder.WriteString("- Total lines: " + itoa(totalLines) + "\n")
-	builder.WriteString("- Attach images: " + boolYesNo(header.AttachImages) + "\n")
+	builder.WriteString("- Attach images: " + describeAttachImages(keySummary, header.AttachImages) + "\n")
 	if header.PipelineFingerprint != "" {
-		builder.WriteString("- Pipeline fingerprint: `" + header.PipelineFingerprint + "`\n")
+		builder.WriteString("- Pipeline fingerprint (this publish): `" + header.PipelineFingerprint + "`\n")
 	}
 	if header.ConfigFingerprint != "" {
-		builder.WriteString("- Config fingerprint: `" + header.ConfigFingerprint + "`\n")
+		builder.WriteString("- Config fingerprint (this publish): `" + header.ConfigFingerprint + "`\n")
 	}
 	if header.ExportedAt != "" {
 		builder.WriteString("- Exported at: " + header.ExportedAt + "\n")
 	}
 	if license != "" {
 		builder.WriteString("- License: " + license + "\n")
+	}
+
+	if keySummary.Mixed() || len(keySummary.ByKey) > 1 {
+		builder.WriteString("\n## Sessions by Redaction Key\n\n")
+		builder.WriteString("This dataset contains sessions published under more than one redaction configuration. ")
+		builder.WriteString("Each session is authoritative for its own redaction key; the per-publish fingerprints above describe only the latest publish.\n\n")
+		keys := make([]string, 0, len(keySummary.ByKey))
+		for key := range keySummary.ByKey {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		builder.WriteString("| Redaction key | Sessions |\n| --- | ---: |\n")
+		for _, key := range keys {
+			display := key
+			if display == "" {
+				display = "(unknown)"
+			}
+			builder.WriteString("| `" + display + "` | " + itoa(keySummary.ByKey[key]) + " |\n")
+		}
 	}
 
 	if len(byFormat) > 0 {
@@ -157,6 +177,23 @@ func boolYesNo(value bool) string {
 		return "yes"
 	}
 	return "no"
+}
+
+// describeAttachImages renders the dataset-wide image-attachment state
+// from the observed per-session redaction keys. Falls back to the
+// header's per-publish claim only when no entry has a recognisable key
+// (e.g. a freshly-seeded dataset with empty keys).
+func describeAttachImages(summary RedactionKeySummary, publishAttach bool) string {
+	switch {
+	case summary.Mixed():
+		return "mixed (" + itoa(summary.Keep) + " keep / " + itoa(summary.Strip) + " strip)"
+	case summary.AllKeep():
+		return "yes"
+	case summary.AllStrip():
+		return "no"
+	default:
+		return boolYesNo(publishAttach)
+	}
 }
 
 func update(rows map[string]Breakdown, key string, record schema.Record) {

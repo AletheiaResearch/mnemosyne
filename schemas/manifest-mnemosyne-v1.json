@@ -32,12 +32,12 @@
         },
         "pipeline_fingerprint": {
           "type": "string",
-          "description": "Fingerprint identifying the redaction pipeline version, e.g. \"v1:<detector-version>\".",
+          "description": "Fingerprint identifying the redaction pipeline version, e.g. \"v1:<detector-version>\". Describes the pipeline used for THIS publish event, not the entire dataset — retained remote sessions from prior publishes may have been produced under a different pipeline. Per-session truth lives in each session entry's redaction_key.",
           "minLength": 1
         },
         "config_fingerprint": {
           "type": "string",
-          "description": "SHA-256 fingerprint of the user's redaction config (custom_redactions + custom_handles), formatted as \"sha256:<hex>\".",
+          "description": "SHA-256 fingerprint of the user's redaction config (custom_redactions + custom_handles), formatted as \"sha256:<hex>\". Scoped to THIS publish event; see pipeline_fingerprint's note about retained sessions.",
           "pattern": "^sha256:[0-9a-f]{64}$"
         },
         "session_count": {
@@ -52,7 +52,7 @@
         },
         "attach_images": {
           "type": "boolean",
-          "description": "Whether inline image attachments (base64 data URLs) were retained in the uploaded session files."
+          "description": "Whether inline image attachments (base64 data URLs) were retained in the session files uploaded during THIS publish event. Retained remote sessions from prior publishes may have used a different policy. The authoritative per-session image mode is encoded in the session entry's redaction_key suffix (\"keep-images\" vs \"strip-images\")."
         },
         "attestation": {
           "$ref": "#/$defs/attestation"

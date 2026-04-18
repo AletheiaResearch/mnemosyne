@@ -14,6 +14,16 @@ import (
 const ManifestMnemosyneVersion = "v1"
 
 // ManifestHeader is the first line of a manifest.mnemosyne file.
+//
+// PipelineFingerprint, ConfigFingerprint, and AttachImages describe the
+// publish event that produced this manifest — i.e. the redaction rules
+// and image policy the publisher applied to sessions uploaded in this
+// publish. They do NOT describe the entire dataset. Retained remote
+// sessions may carry different redaction keys; the authoritative source
+// of truth for what each individual session was redacted under is the
+// per-entry RedactionKey. Use that (or the aggregate derived from the
+// entries) whenever the question is about the dataset rather than this
+// specific publish event.
 type ManifestHeader struct {
 	Kind                string             `json:"kind"`
 	Version             string             `json:"version"`
@@ -191,4 +201,57 @@ const ManifestFileName = "manifest.mnemosyne"
 // manifest stores file references regardless of host OS.
 func NormalizeFile(path string) string {
 	return strings.ReplaceAll(path, "\\", "/")
+}
+
+// RedactionKeySummary describes the observed redaction-key mix across a
+// list of manifest entries. Keep / Strip count sessions whose redaction
+// key ends in "keep-images" / "strip-images" respectively; Unknown
+// counts entries with no recognisable suffix (legacy or empty keys).
+type RedactionKeySummary struct {
+	Keep    int
+	Strip   int
+	Unknown int
+	// ByKey maps the full redaction_key string to its session count so
+	// callers can surface every distinct pipeline/config variant present.
+	ByKey map[string]int
+}
+
+// Mixed reports whether the entries represent more than one image mode.
+// "Mixed" is only true when both keep and strip modes are observed;
+// unknown-only entries are not considered a mix with themselves.
+func (s RedactionKeySummary) Mixed() bool {
+	return s.Keep > 0 && s.Strip > 0
+}
+
+// AllKeep reports whether every entry with a recognisable redaction key
+// is in keep-images mode. Returns false when there are no keep-mode
+// entries at all, even if everything is strip-mode.
+func (s RedactionKeySummary) AllKeep() bool {
+	return s.Keep > 0 && s.Strip == 0
+}
+
+// AllStrip reports whether every entry with a recognisable redaction key
+// is in strip-images mode.
+func (s RedactionKeySummary) AllStrip() bool {
+	return s.Strip > 0 && s.Keep == 0
+}
+
+// SummarizeRedactionKeys counts the image-mode suffix of every entry's
+// redaction_key. It is the observed, aggregate truth for a set of
+// manifest entries — use it when describing the dataset as a whole, as
+// opposed to a single publish event (header.AttachImages).
+func SummarizeRedactionKeys(entries []ManifestEntry) RedactionKeySummary {
+	summary := RedactionKeySummary{ByKey: make(map[string]int)}
+	for _, entry := range entries {
+		summary.ByKey[entry.RedactionKey]++
+		switch {
+		case strings.HasSuffix(entry.RedactionKey, ":keep-images"):
+			summary.Keep++
+		case strings.HasSuffix(entry.RedactionKey, ":strip-images"):
+			summary.Strip++
+		default:
+			summary.Unknown++
+		}
+	}
+	return summary
 }
