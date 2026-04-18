@@ -8,6 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
+	"github.com/AletheiaResearch/mnemosyne/internal/config"
+	"github.com/AletheiaResearch/mnemosyne/internal/schema"
 	"github.com/AletheiaResearch/mnemosyne/internal/serialize"
 )
 
@@ -21,51 +25,150 @@ func TestTransformRecordsReturnsFlushError(t *testing.T) {
 	}
 }
 
-func TestSelectSerializerBuiltinTemplate(t *testing.T) {
-	s, err := selectSerializer("", "chatml", "", serialize.TemplateOptions{})
+// transformCmdWithFlags mirrors newTransformCommand's flag registration so tests
+// can control cobra's flag.Changed state precisely.
+func transformCmdWithFlags(set map[string]string) *cobra.Command {
+	cmd := &cobra.Command{Use: "transform"}
+	var (
+		input, output, format                              string
+		templateName, templateFile, bosToken, eosToken     string
+		addGenerationPrompt                                bool
+	)
+	cmd.Flags().StringVar(&input, "input", "", "")
+	cmd.Flags().StringVar(&output, "output", "", "")
+	cmd.Flags().StringVar(&format, "format", "canonical", "")
+	cmd.Flags().StringVar(&templateName, "template-name", "", "")
+	cmd.Flags().StringVar(&templateFile, "template-file", "", "")
+	cmd.Flags().StringVar(&bosToken, "bos-token", "", "")
+	cmd.Flags().StringVar(&eosToken, "eos-token", "", "")
+	cmd.Flags().BoolVar(&addGenerationPrompt, "add-generation-prompt", false, "")
+	for name, value := range set {
+		if err := cmd.Flags().Set(name, value); err != nil {
+			panic(err)
+		}
+	}
+	return cmd
+}
+
+func TestResolveExplicitTemplateNameWins(t *testing.T) {
+	cmd := transformCmdWithFlags(map[string]string{"template-name": "chatml"})
+	s, err := resolveTransformSerializer(cmd, config.ChatTemplate{File: "/persisted.tmpl"}, transformFlags{
+		Format:       "canonical",
+		TemplateName: "chatml",
+	})
 	if err != nil {
-		t.Fatalf("selectSerializer: %v", err)
+		t.Fatal(err)
 	}
 	if !strings.HasPrefix(s.Name(), "template:chatml") {
-		t.Errorf("want template:chatml name, got %q", s.Name())
+		t.Errorf("want template:chatml, got %q", s.Name())
 	}
 }
 
-func TestSelectSerializerFileTemplate(t *testing.T) {
+func TestResolveExplicitFormatBeatsPersistedTemplate(t *testing.T) {
+	cmd := transformCmdWithFlags(map[string]string{"format": "flat"})
+	s, err := resolveTransformSerializer(cmd, config.ChatTemplate{Name: "chatml"}, transformFlags{
+		Format: "flat",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Name() != "flat" {
+		t.Errorf("want flat, got %q", s.Name())
+	}
+}
+
+func TestResolvePersistedNameUsedWhenNoFlagsSet(t *testing.T) {
+	cmd := transformCmdWithFlags(nil)
+	s, err := resolveTransformSerializer(cmd, config.ChatTemplate{Name: "zephyr", EOSToken: "</s>"}, transformFlags{
+		Format: "canonical",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(s.Name(), "template:zephyr") {
+		t.Errorf("want template:zephyr, got %q", s.Name())
+	}
+}
+
+func TestResolvePersistedFileUsedWhenNoFlagsSet(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "x.tmpl")
 	if err := os.WriteFile(path, []byte("{{range .Messages}}{{.Role}}\n{{end}}"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
+		t.Fatal(err)
 	}
-	s, err := selectSerializer("", "", path, serialize.TemplateOptions{})
+	cmd := transformCmdWithFlags(nil)
+	s, err := resolveTransformSerializer(cmd, config.ChatTemplate{File: path}, transformFlags{
+		Format: "canonical",
+	})
 	if err != nil {
-		t.Fatalf("selectSerializer: %v", err)
+		t.Fatal(err)
 	}
 	if !strings.Contains(s.Name(), "template:file(") {
-		t.Errorf("want file template name, got %q", s.Name())
+		t.Errorf("want template:file(...), got %q", s.Name())
 	}
 }
 
-func TestSelectSerializerFormatFallback(t *testing.T) {
-	s, err := selectSerializer("canonical", "", "", serialize.TemplateOptions{})
+func TestResolvePersistedTokensFillInForExplicitTemplate(t *testing.T) {
+	cmd := transformCmdWithFlags(map[string]string{"template-name": "zephyr"})
+	s, err := resolveTransformSerializer(cmd,
+		config.ChatTemplate{EOSToken: "</s>", AddGenerationPrompt: true},
+		transformFlags{TemplateName: "zephyr", Format: "canonical"},
+	)
 	if err != nil {
-		t.Fatalf("selectSerializer: %v", err)
+		t.Fatal(err)
 	}
-	if s.Name() != "canonical" {
-		t.Errorf("want canonical, got %q", s.Name())
+	tmpl, ok := s.(*serialize.Template)
+	if !ok {
+		t.Fatalf("expected *serialize.Template, got %T", s)
+	}
+	payload, err := tmpl.Serialize(sampleTransformRecord())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := payload.(struct {
+		ID      string `json:"id"`
+		Model   string `json:"model"`
+		Content string `json:"content"`
+	}).Content
+	if !strings.Contains(body, "</s>") {
+		t.Errorf("expected persisted EOS in content: %q", body)
+	}
+	if !strings.HasSuffix(body, "<|assistant|>\n") {
+		t.Errorf("expected persisted add_generation_prompt to trigger trailing assistant tag: %q", body)
 	}
 }
 
-func TestSelectSerializerMutuallyExclusive(t *testing.T) {
-	_, err := selectSerializer("", "chatml", "/tmp/x.tmpl", serialize.TemplateOptions{})
+func TestResolveMutuallyExclusiveExplicitFlags(t *testing.T) {
+	cmd := transformCmdWithFlags(map[string]string{
+		"template-name": "chatml",
+		"template-file": "/tmp/x.tmpl",
+	})
+	_, err := resolveTransformSerializer(cmd, config.ChatTemplate{}, transformFlags{
+		TemplateName: "chatml",
+		TemplateFile: "/tmp/x.tmpl",
+	})
 	if err == nil {
-		t.Fatal("expected mutually-exclusive error")
+		t.Fatal("expected mutually exclusive error")
 	}
 }
 
-func TestSelectSerializerUnknownFormat(t *testing.T) {
-	_, err := selectSerializer("does-not-exist", "", "", serialize.TemplateOptions{})
+func TestResolveUnknownFormat(t *testing.T) {
+	cmd := transformCmdWithFlags(map[string]string{"format": "does-not-exist"})
+	_, err := resolveTransformSerializer(cmd, config.ChatTemplate{}, transformFlags{
+		Format: "does-not-exist",
+	})
 	if err == nil {
 		t.Fatal("expected unknown serializer error")
+	}
+}
+
+func sampleTransformRecord() schema.Record {
+	return schema.Record{
+		RecordID: "rec-1",
+		Model:    "test-model",
+		Turns: []schema.Turn{
+			{Role: "user", Text: "hello"},
+			{Role: "assistant", Text: "hi"},
+		},
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/AletheiaResearch/mnemosyne/internal/config"
 	"github.com/AletheiaResearch/mnemosyne/internal/schema"
 	"github.com/AletheiaResearch/mnemosyne/internal/serialize"
 )
@@ -36,7 +37,15 @@ func newTransformCommand(rt *runtime) *cobra.Command {
 				return errors.New("transform requires --output")
 			}
 
-			serializer, err := selectSerializer(format, templateName, templateFile, serialize.TemplateOptions{
+			cfg, err := loadConfig(rt.configPath)
+			if err != nil {
+				return err
+			}
+
+			serializer, err := resolveTransformSerializer(cmd, cfg.ChatTemplateValue(), transformFlags{
+				Format:              format,
+				TemplateName:        templateName,
+				TemplateFile:        templateFile,
 				BOSToken:            bosToken,
 				EOSToken:            eosToken,
 				AddGenerationPrompt: addGenerationPrompt,
@@ -72,17 +81,64 @@ func newTransformCommand(rt *runtime) *cobra.Command {
 	return cmd
 }
 
-func selectSerializer(format, templateName, templateFile string, opts serialize.TemplateOptions) (serialize.Serializer, error) {
-	if templateName != "" && templateFile != "" {
+type transformFlags struct {
+	Format              string
+	TemplateName        string
+	TemplateFile        string
+	BOSToken            string
+	EOSToken            string
+	AddGenerationPrompt bool
+}
+
+// resolveTransformSerializer picks the right serializer, applying persisted
+// chat-template defaults when the caller did not set the relevant CLI flag.
+//
+// Precedence for the serializer identity:
+//  1. Explicit --template-name / --template-file flag.
+//  2. Explicit --format flag.
+//  3. Persisted ChatTemplate in config (Name preferred, then File).
+//  4. Default --format value ("canonical").
+//
+// Token and generation-prompt flags fall back to persisted values the same way.
+func resolveTransformSerializer(cmd *cobra.Command, defaults config.ChatTemplate, f transformFlags) (serialize.Serializer, error) {
+	flagChanged := cmd.Flags().Changed
+	templateNameSet := flagChanged("template-name")
+	templateFileSet := flagChanged("template-file")
+	formatSet := flagChanged("format")
+
+	if templateNameSet && templateFileSet {
 		return nil, errors.New("--template-name and --template-file are mutually exclusive")
 	}
-	if templateName != "" {
-		return serialize.NewBuiltinTemplate(templateName, opts)
+
+	opts := serialize.TemplateOptions{
+		BOSToken:            f.BOSToken,
+		EOSToken:            f.EOSToken,
+		AddGenerationPrompt: f.AddGenerationPrompt,
 	}
-	if templateFile != "" {
-		return serialize.NewFileTemplate(templateFile, opts)
+	if !flagChanged("bos-token") {
+		opts.BOSToken = defaults.BOSToken
 	}
-	serializer := serialize.Lookup(format)
+	if !flagChanged("eos-token") {
+		opts.EOSToken = defaults.EOSToken
+	}
+	if !flagChanged("add-generation-prompt") {
+		opts.AddGenerationPrompt = defaults.AddGenerationPrompt
+	}
+
+	switch {
+	case templateNameSet && f.TemplateName != "":
+		return serialize.NewBuiltinTemplate(f.TemplateName, opts)
+	case templateFileSet && f.TemplateFile != "":
+		return serialize.NewFileTemplate(f.TemplateFile, opts)
+	case formatSet:
+		// Explicit --format wins over persisted template defaults.
+	case defaults.Name != "":
+		return serialize.NewBuiltinTemplate(defaults.Name, opts)
+	case defaults.File != "":
+		return serialize.NewFileTemplate(defaults.File, opts)
+	}
+
+	serializer := serialize.Lookup(f.Format)
 	if serializer == nil {
 		return nil, errors.New("unknown serializer")
 	}
