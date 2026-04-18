@@ -2,14 +2,8 @@ package posthog
 
 import (
 	"context"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 )
 
 // Fixtures are assembled at runtime so the full provider-prefixed
@@ -25,8 +19,6 @@ const (
 	personalBody = "abcdefghijklmnopqrstuvwxyz0123456789"
 	flagBody     = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef012345"
 	projectBody  = "abcdefghijklmnopqrstuvwxyz01234567"
-	unknownBody  = "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
-	flagLongBody = "abcdefghijklmnopqrstuvwxyz012345678901"
 )
 
 func TestRegexMatches(t *testing.T) {
@@ -114,225 +106,14 @@ func TestRegexMatches(t *testing.T) {
 	}
 }
 
-func TestPersonalAPIKeyVerification(t *testing.T) {
+// TestFromDataIgnoresVerifyArg confirms the detector never marks a
+// match verified — even when trufflehog passes verify=true, the
+// pipeline intentionally keeps PostHog detection regex-only.
+func TestFromDataIgnoresVerifyArg(t *testing.T) {
 	t.Parallel()
 
-	good := fakeKey(phxPrefix, personalBody)
-
-	var usCalls, euCalls atomic.Int32
-	us := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		usCalls.Add(1)
-		if r.URL.Path != "/api/users/@me/" {
-			http.NotFound(w, r)
-			return
-		}
-		if r.Header.Get("Authorization") != "Bearer "+good {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, `{"email":"test@example.com"}`)
-	}))
-	defer us.Close()
-	eu := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		euCalls.Add(1)
-		// The EU fixture always 401s so the unknown-key case exhausts
-		// both regions and the verified case stops at US.
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	defer eu.Close()
-
-	scanner := NewPersonalAPIKeyScanner(
-		WithBaseURLs([]string{us.URL, eu.URL}),
-		WithHTTPClient(http.DefaultClient),
-	)
-
-	// Verified: US returns 200, EU should not be queried.
-	results, err := scanner.FromData(context.Background(), true, []byte(good))
-	if err != nil {
-		t.Fatalf("FromData: %v", err)
-	}
-	if len(results) != 1 || !results[0].Verified {
-		t.Fatalf("expected verified=true, got %+v", results)
-	}
-	if err := results[0].VerificationError(); err != nil {
-		t.Fatalf("unexpected verification error: %v", err)
-	}
-	if usCalls.Load() != 1 || euCalls.Load() != 0 {
-		t.Fatalf("verified case should stop at US, got us=%d eu=%d", usCalls.Load(), euCalls.Load())
-	}
-
-	// Unknown: US 401 → EU 401 → verified=false, no error surfaced.
-	bad := fakeKey(phxPrefix, unknownBody)
-	results, err = scanner.FromData(context.Background(), true, []byte(bad))
-	if err != nil {
-		t.Fatalf("FromData: %v", err)
-	}
-	if len(results) != 1 || results[0].Verified {
-		t.Fatalf("expected verified=false for unknown key, got %+v", results)
-	}
-	if err := results[0].VerificationError(); err != nil {
-		t.Fatalf("401 should not be a verification error, got %v", err)
-	}
-	if usCalls.Load() != 2 || euCalls.Load() != 1 {
-		t.Fatalf("unknown case should query both regions, got us=%d eu=%d", usCalls.Load(), euCalls.Load())
-	}
-}
-
-func TestProjectAPIKeyVerification(t *testing.T) {
-	t.Parallel()
-
-	good := fakeKey(phcPrefix, projectBody)
-
-	var mu sync.Mutex
-	var bodies []string
-	us := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/flags/" {
-			http.NotFound(w, r)
-			return
-		}
-		body, _ := io.ReadAll(r.Body)
-		mu.Lock()
-		bodies = append(bodies, string(body))
-		mu.Unlock()
-		if !strings.Contains(string(body), good) {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, `{"featureFlags":{}}`)
-	}))
-	defer us.Close()
-
-	scanner := NewProjectAPIKeyScanner(
-		WithBaseURLs([]string{us.URL}),
-		WithHTTPClient(http.DefaultClient),
-	)
-
-	results, err := scanner.FromData(context.Background(), true, []byte(good))
-	if err != nil {
-		t.Fatalf("FromData: %v", err)
-	}
-	if len(results) != 1 || !results[0].Verified {
-		t.Fatalf("expected verified=true, got %+v", results)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if len(bodies) != 1 || !strings.Contains(bodies[0], good) {
-		t.Fatalf("expected /flags body to embed key, got %v", bodies)
-	}
-}
-
-func TestFeatureFlagKeyHasNoVerification(t *testing.T) {
-	t.Parallel()
-
-	scanner := NewFeatureFlagSecureKeyScanner()
-	key := fakeKey(phsPrefix, flagLongBody)
-	results, err := scanner.FromData(context.Background(), true, []byte(key))
-	if err != nil {
-		t.Fatalf("FromData: %v", err)
-	}
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
-	}
-	if results[0].Verified {
-		t.Fatalf("phs keys have no verifier, should not be marked verified")
-	}
-	if err := results[0].VerificationError(); err != nil {
-		t.Fatalf("phs skip should not set a verification error, got %v", err)
-	}
-}
-
-func TestWithBaseURLsIgnoresEmpty(t *testing.T) {
-	t.Parallel()
-
-	scanner := NewPersonalAPIKeyScanner(WithBaseURLs(nil))
-	if len(scanner.baseURLs) == 0 {
-		t.Fatalf("expected default base URLs to be preserved when override is empty")
-	}
-}
-
-// TestSelfHostedEndpointOverridesDefaults asserts that POSTHOG_ENDPOINT
-// routes both the personal-key and project-key verifiers to a single
-// self-hosted origin, bypassing the cloud fallbacks so a self-hosted
-// key is never leaked to PostHog Cloud for verification.
-func TestSelfHostedEndpointOverridesDefaults(t *testing.T) {
-	t.Setenv(SelfHostedEndpointEnv, "http://localhost:8000")
-
-	personal := NewPersonalAPIKeyScanner()
-	project := NewProjectAPIKeyScanner()
-	feature := NewFeatureFlagSecureKeyScanner()
-
-	for _, s := range []*Scanner{personal, project, feature} {
-		if !equalStrings(s.baseURLs, []string{"http://localhost:8000"}) {
-			t.Fatalf("%s: expected self-hosted endpoint to replace defaults, got %v",
-				s.Name(), s.baseURLs)
-		}
-	}
-}
-
-// TestSelfHostedEndpointVerifiesProjectKey end-to-ends the self-hosted
-// path: with POSTHOG_ENDPOINT set and no WithBaseURLs override, the
-// project scanner must hit /flags/?v=2 on the env-supplied host and
-// flag the key as verified.
-func TestSelfHostedEndpointVerifiesProjectKey(t *testing.T) {
-	good := fakeKey(phcPrefix, projectBody)
-
-	var hits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/flags/" {
-			http.NotFound(w, r)
-			return
-		}
-		hits.Add(1)
-		body, _ := io.ReadAll(r.Body)
-		if !strings.Contains(string(body), good) {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, `{"featureFlags":{}}`)
-	}))
-	defer srv.Close()
-
-	t.Setenv(SelfHostedEndpointEnv, srv.URL)
-
-	scanner := NewProjectAPIKeyScanner(WithHTTPClient(http.DefaultClient))
-	results, err := scanner.FromData(context.Background(), true, []byte(good))
-	if err != nil {
-		t.Fatalf("FromData: %v", err)
-	}
-	if len(results) != 1 || !results[0].Verified {
-		t.Fatalf("expected verified=true via self-hosted endpoint, got %+v", results)
-	}
-	if hits.Load() == 0 {
-		t.Fatalf("expected self-hosted server to be queried")
-	}
-}
-
-// TestPersonalAPIKeyPreservesTransportErrorAcrossRegions guards the
-// region-fallback semantics: a transport error on the first host
-// followed by 401 on the second must surface as a verification error,
-// not a clean "not verified" — otherwise an unreachable region silently
-// downgrades a potentially-valid key to unverified.
-func TestPersonalAPIKeyPreservesTransportErrorAcrossRegions(t *testing.T) {
-	t.Parallel()
-
+	scanner := NewPersonalAPIKeyScanner()
 	key := fakeKey(phxPrefix, personalBody)
-	reachable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	defer reachable.Close()
-
-	scanner := NewPersonalAPIKeyScanner(
-		// First host intentionally unreachable (port 1 is the TCPMUX
-		// service, which should refuse or never respond).
-		WithBaseURLs([]string{"http://127.0.0.1:1", reachable.URL}),
-		WithHTTPClient(&http.Client{Timeout: 500 * time.Millisecond}),
-	)
-
 	results, err := scanner.FromData(context.Background(), true, []byte(key))
 	if err != nil {
 		t.Fatalf("FromData: %v", err)
@@ -341,10 +122,7 @@ func TestPersonalAPIKeyPreservesTransportErrorAcrossRegions(t *testing.T) {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
 	if results[0].Verified {
-		t.Fatalf("unreachable first region + 401 must not mark key verified")
-	}
-	if results[0].VerificationError() == nil {
-		t.Fatalf("expected verification error to be preserved from the unreachable region")
+		t.Fatalf("verify=true must not mark PostHog keys verified (regex-only)")
 	}
 }
 
