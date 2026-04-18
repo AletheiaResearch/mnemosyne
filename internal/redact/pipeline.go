@@ -15,11 +15,16 @@ const PlaceholderMarker = "[MNEMOSYNE_REDACTED]"
 type Options struct {
 	CustomRedactions []string
 	CustomHandles    []string
+	// VerifySecrets toggles live verification against provider APIs for
+	// detectors that support it (currently: PostHog). When false the
+	// pipeline stays fully offline.
+	VerifySecrets bool
 }
 
 type Pipeline struct {
 	anonymizer *Anonymizer
 	detector   *Detector
+	trufflehog *trufflehogRunner
 	literals   []string
 }
 
@@ -41,14 +46,23 @@ func New(opts Options) (*Pipeline, error) {
 	return &Pipeline{
 		anonymizer: anonymizer,
 		detector:   NewDetector(),
+		trufflehog: newTrufflehogRunner(PostHogDetectors(), opts.VerifySecrets),
 		literals:   literals,
 	}, nil
 }
 
 func FromConfig(cfg config.Config) (*Pipeline, error) {
+	return FromConfigWithOptions(cfg, Options{})
+}
+
+// FromConfigWithOptions builds a Pipeline from persisted config while
+// honouring extra runtime-only options (e.g. --verify-secrets). Fields
+// already derived from cfg take precedence.
+func FromConfigWithOptions(cfg config.Config, extra Options) (*Pipeline, error) {
 	return New(Options{
 		CustomRedactions: cfg.CustomRedactions,
 		CustomHandles:    cfg.CustomHandles,
+		VerifySecrets:    extra.VerifySecrets,
 	})
 }
 
@@ -94,7 +108,9 @@ func (p *Pipeline) ScanRecord(record schema.Record) Findings {
 		builder.WriteString(turn.Reasoning)
 		builder.WriteRune('\n')
 	}
-	return p.detector.Scan(builder.String())
+	findings := p.detector.Scan(builder.String())
+	p.trufflehog.Scan(builder.String(), &findings)
+	return findings
 }
 
 func (p *Pipeline) applyTurn(turn schema.Turn, count int) (schema.Turn, int) {
@@ -206,6 +222,8 @@ func (p *Pipeline) applyString(input string, mode applyMode) (string, int) {
 	}
 
 	out, count := p.detector.Redact(input)
+	out, trufflehogCount := p.trufflehog.Redact(out)
+	count += trufflehogCount
 	out, literalCount := applyLiterals(out, p.literals)
 	count += literalCount
 

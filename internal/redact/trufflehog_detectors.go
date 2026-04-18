@@ -236,3 +236,113 @@ func PostHogDetectors() []detectors.Detector {
 		},
 	}
 }
+
+// trufflehogRunner adapts a set of trufflehog Detector implementations
+// so they plug into the redact Pipeline the same way the regex Detector
+// does: a Redact method that replaces every matched secret with
+// PlaceholderMarker and a Scan method that folds hits into a Findings.
+type trufflehogRunner struct {
+	detectors []detectors.Detector
+	verify    bool
+}
+
+// verifyBudget bounds the combined time spent verifying a single input
+// across all detectors. Individual HTTP requests already carry their
+// own per-request timeouts (see NewDetectorHttpClient).
+const verifyBudget = 15 * time.Second
+
+func newTrufflehogRunner(ds []detectors.Detector, verify bool) *trufflehogRunner {
+	return &trufflehogRunner{detectors: ds, verify: verify}
+}
+
+// Redact finds secrets via trufflehog detectors and replaces each raw
+// match with PlaceholderMarker. Returns the rewritten string and the
+// number of replacements performed.
+func (r *trufflehogRunner) Redact(input string) (string, int) {
+	if r == nil || len(r.detectors) == 0 || input == "" {
+		return input, 0
+	}
+	ctx, cancel := r.context()
+	defer cancel()
+
+	out := input
+	data := []byte(input)
+	count := 0
+	for _, d := range r.detectors {
+		if !containsAnyKeyword(input, d.Keywords()) {
+			continue
+		}
+		results, err := d.FromData(ctx, r.verify, data)
+		if err != nil || len(results) == 0 {
+			continue
+		}
+		for _, result := range results {
+			raw := string(result.Raw)
+			if raw == "" {
+				continue
+			}
+			replaced, n := stringsReplaceAll(out, raw, PlaceholderMarker)
+			out = replaced
+			count += n
+		}
+	}
+	return out, count
+}
+
+// Scan reports trufflehog matches as tokens in the supplied Findings.
+// Regex-only matches are classed as tokens; when verification runs and
+// succeeds, the key lands in VerifiedSecrets so callers can surface
+// confirmed-live credentials separately.
+func (r *trufflehogRunner) Scan(input string, findings *Findings) {
+	if r == nil || len(r.detectors) == 0 || input == "" || findings == nil {
+		return
+	}
+	ctx, cancel := r.context()
+	defer cancel()
+
+	data := []byte(input)
+	for _, d := range r.detectors {
+		if !containsAnyKeyword(input, d.Keywords()) {
+			continue
+		}
+		results, err := d.FromData(ctx, r.verify, data)
+		if err != nil || len(results) == 0 {
+			continue
+		}
+		for _, result := range results {
+			raw := string(result.Raw)
+			if raw == "" {
+				continue
+			}
+			findings.TokenCount++
+			if len(findings.Tokens) < 20 {
+				findings.Tokens = append(findings.Tokens, result.DetectorName+":"+result.Redacted)
+			}
+			if result.Verified {
+				findings.VerifiedSecretCount++
+				if len(findings.VerifiedSecrets) < 20 {
+					findings.VerifiedSecrets = append(findings.VerifiedSecrets, result.DetectorName+":"+result.Redacted)
+				}
+			}
+		}
+	}
+}
+
+func (r *trufflehogRunner) context() (context.Context, context.CancelFunc) {
+	if !r.verify {
+		// Regex-only path never performs network I/O, so the context
+		// is nominal — a cancel-on-return is enough.
+		ctx, cancel := context.WithCancel(context.Background())
+		return ctx, cancel
+	}
+	return context.WithTimeout(context.Background(), verifyBudget)
+}
+
+func containsAnyKeyword(input string, keywords []string) bool {
+	for _, kw := range keywords {
+		if kw != "" && strings.Contains(input, kw) {
+			return true
+		}
+	}
+	return false
+}

@@ -73,3 +73,29 @@ func TestAnonymizerDoesNotRewriteShortHandlePrefixCollisions(t *testing.T) {
 		t.Fatalf("expected unrelated path to stay unchanged, got %q", out)
 	}
 }
+
+func TestPipelineRedactsPostHogKeys(t *testing.T) {
+	t.Parallel()
+
+	pipeline, err := New(Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, key := range []string{
+		fakeKey(phxPrefix, personalBody),
+		fakeKey(phsPrefix, flagBody),
+		fakeKey(phcPrefix, projectBody),
+	} {
+		out, count := pipeline.applyText("Authorization: Bearer " + key)
+		if count == 0 {
+			t.Fatalf("expected redaction for %q", key)
+		}
+		if strings.Contains(out, key) {
+			t.Fatalf("key %q still present in %q", key, out)
+		}
+		if !strings.Contains(out, PlaceholderMarker) {
+			t.Fatalf("expected placeholder marker in %q", out)
+		}
+	}
+}

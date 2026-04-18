@@ -18,13 +18,15 @@ type replacementPattern struct {
 }
 
 type Findings struct {
-	EmailCount    int       `json:"email_count"`
-	PublicIPCount int       `json:"public_ip_count"`
-	TokenCount    int       `json:"token_count"`
-	Emails        []string  `json:"emails,omitempty"`
-	PublicIPs     []string  `json:"public_ips,omitempty"`
-	Tokens        []string  `json:"tokens,omitempty"`
-	HighEntropy   []Finding `json:"high_entropy,omitempty"`
+	EmailCount          int       `json:"email_count"`
+	PublicIPCount       int       `json:"public_ip_count"`
+	TokenCount          int       `json:"token_count"`
+	VerifiedSecretCount int       `json:"verified_secret_count,omitempty"`
+	Emails              []string  `json:"emails,omitempty"`
+	PublicIPs           []string  `json:"public_ips,omitempty"`
+	Tokens              []string  `json:"tokens,omitempty"`
+	VerifiedSecrets     []string  `json:"verified_secrets,omitempty"`
+	HighEntropy         []Finding `json:"high_entropy,omitempty"`
 }
 
 type Finding struct {
@@ -101,7 +103,8 @@ func (d *Detector) Scan(input string) Findings {
 }
 
 func (f Findings) Empty() bool {
-	return f.EmailCount == 0 && f.PublicIPCount == 0 && f.TokenCount == 0 && len(f.HighEntropy) == 0
+	return f.EmailCount == 0 && f.PublicIPCount == 0 && f.TokenCount == 0 &&
+		f.VerifiedSecretCount == 0 && len(f.HighEntropy) == 0
 }
 
 func replacePattern(input string, pattern replacementPattern) (string, int) {
