@@ -1,0 +1,23 @@
+{{/* Vicuna chat template — ported from NousResearch/Hermes-Function-Calling vicuna.j2 */ -}}
+{{- $loop := .Messages -}}
+{{- $system := "" -}}
+{{- if gt (len .Messages) 0 -}}
+{{- if eq (index .Messages 0).Role "system" -}}
+{{- $system = printf "%s\n\n" (trim (index .Messages 0).Content) -}}
+{{- $loop = slice .Messages 1 -}}
+{{- end -}}
+{{- end -}}
+{{- .BOSToken }}{{ $system -}}
+{{- range $i, $m := $loop -}}
+{{- if ne (eq $m.Role "user") (eq (mod $i 2) 0) -}}
+{{- raiseException "Conversation roles must alternate user/assistant/user/assistant/..." -}}
+{{- end -}}
+{{if eq $m.Role "user" -}}
+USER: {{ trim $m.Content }}
+{{else if eq $m.Role "assistant" -}}
+ASSISTANT: {{ trim $m.Content }}{{ $.EOSToken }}
+{{end -}}
+{{- end -}}
+{{- if .AddGenerationPrompt -}}
+ASSISTANT:
+{{- end -}}

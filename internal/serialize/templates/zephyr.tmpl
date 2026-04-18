@@ -1,0 +1,9 @@
+{{/* Zephyr chat template — ported from NousResearch/Hermes-Function-Calling zephyr.j2 */ -}}
+{{range .Messages}}{{if eq .Role "user"}}<|user|>
+{{.Content}}{{$.EOSToken}}
+{{else if eq .Role "system"}}<|system|>
+{{.Content}}{{$.EOSToken}}
+{{else if eq .Role "assistant"}}<|assistant|>
+{{.Content}}{{$.EOSToken}}
+{{end}}{{if and .IsLast $.AddGenerationPrompt}}<|assistant|>
+{{end}}{{end -}}

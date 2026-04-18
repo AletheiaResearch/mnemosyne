@@ -1,0 +1,6 @@
+{{/* ChatML chat template — ported from NousResearch/Hermes-Function-Calling chatml.j2 */ -}}
+{{range .Messages}}<|im_start|>{{.Role}}
+{{.Content}}<|im_end|>
+{{end -}}
+{{if .AddGenerationPrompt -}}<|im_start|>assistant
+{{end -}}
