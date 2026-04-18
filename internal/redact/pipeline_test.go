@@ -62,9 +62,10 @@ func TestPipelineRedactsWithoutVerification(t *testing.T) {
 		`{"api_key":"` + project + `"}`,
 	}, "\n")
 
-	out, count := pipeline.applyText(input)
-	if count < 3 {
-		t.Fatalf("expected at least 3 redactions, got %d: %q", count, out)
+	stats := &ApplyStats{}
+	out := pipeline.applyText(input, stats)
+	if stats.Redactions < 3 {
+		t.Fatalf("expected at least 3 redactions, got %d: %q", stats.Redactions, out)
 	}
 	for _, key := range []string{personal, flag, project} {
 		if strings.Contains(out, key) {
@@ -141,9 +142,18 @@ func TestPipelineRedactsWithVerification(t *testing.T) {
 	// before redacting the test fixture.
 	findings := pipeline.ScanRecord(newRecord())
 
-	redacted, redactions := pipeline.ApplyRecord(newRecord())
-	if redactions < 3 {
-		t.Fatalf("expected at least 3 redactions, got %d", redactions)
+	redacted, applyStats := pipeline.ApplyRecord(newRecord())
+	if applyStats.Redactions < 3 {
+		t.Fatalf("expected at least 3 redactions, got %d", applyStats.Redactions)
+	}
+	if applyStats.VerifiedSecretCount != 2 {
+		t.Fatalf("expected ApplyRecord to surface 2 verified secrets (personal+project), got %d (%v)",
+			applyStats.VerifiedSecretCount, applyStats.VerifiedSecrets)
+	}
+	if !containsWith(applyStats.VerifiedSecrets, "PostHogPersonalAPIKey") ||
+		!containsWith(applyStats.VerifiedSecrets, "PostHogProjectAPIKey") {
+		t.Fatalf("ApplyRecord verified secrets should list personal+project detectors, got %v",
+			applyStats.VerifiedSecrets)
 	}
 	turnText := redacted.Turns[0].Text
 	for _, key := range []string{personal, flag, project} {
@@ -210,16 +220,15 @@ func TestPipelineVerifyReportsUnverifiedKeysAsTokens(t *testing.T) {
 	}
 }
 
-// TestScanRecordDedupsTokensAcrossRegexAndTrufflehog guards against the
-// prior bug where a PostHog key in a bearer header was counted once by
-// the regex bearer pattern and then a second time by the trufflehog
-// detector. Both engines now share Findings.seenTokens so the same raw
-// token is only credited once to TokenCount.
+// TestScanRecordDedupsTokensAcrossRegexAndTrufflehog guards against
+// double-counting when the regex detector and a trufflehog scanner both
+// flag the same raw secret (e.g. a phx_ key inside a bearer header
+// matches both the regex "bearer" pattern and the PostHog scanner).
 func TestScanRecordDedupsTokensAcrossRegexAndTrufflehog(t *testing.T) {
 	t.Parallel()
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer ts.Close()
 
@@ -235,9 +244,56 @@ func TestScanRecordDedupsTokensAcrossRegexAndTrufflehog(t *testing.T) {
 	findings := pipeline.ScanRecord(schema.Record{
 		Turns: []schema.Turn{{Text: "Authorization: Bearer " + personal}},
 	})
+
 	if findings.TokenCount != 1 {
-		t.Fatalf("expected TokenCount=1 (regex+trufflehog dedup), got %d: %+v",
-			findings.TokenCount, findings)
+		t.Fatalf("expected TokenCount=1 for a single secret hit by both detectors, got %d (tokens=%v)",
+			findings.TokenCount, findings.Tokens)
+	}
+}
+
+// TestApplyRecordSurfacesVerifiedSecrets verifies that the metadata
+// previously only visible through ScanRecord is now returned from
+// ApplyRecord too, so the extract CLI path can surface verified-secret
+// counts without a second scan.
+func TestApplyRecordSurfacesVerifiedSecrets(t *testing.T) {
+	t.Parallel()
+
+	personal := fakeKey(phxPrefix, personalBody)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/users/@me/" && r.Header.Get("Authorization") == "Bearer "+personal {
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `{"email":"ok@example.com"}`)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+
+	pipeline, err := New(Options{
+		Detectors:     posthogScanners(ts.URL),
+		VerifySecrets: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	record := schema.Record{
+		Turns: []schema.Turn{{Text: "personal=" + personal}},
+	}
+	redacted, stats := pipeline.ApplyRecord(record)
+	if strings.Contains(redacted.Turns[0].Text, personal) {
+		t.Fatalf("expected key to be redacted, got %q", redacted.Turns[0].Text)
+	}
+	if stats.Redactions == 0 {
+		t.Fatalf("expected at least one redaction")
+	}
+	if stats.VerifiedSecretCount != 1 {
+		t.Fatalf("expected 1 verified secret, got %d (%v)",
+			stats.VerifiedSecretCount, stats.VerifiedSecrets)
+	}
+	if !containsWith(stats.VerifiedSecrets, "PostHogPersonalAPIKey") {
+		t.Fatalf("verified secret should carry the detector label, got %v",
+			stats.VerifiedSecrets)
 	}
 }
 

@@ -31,15 +31,17 @@ type breakdown struct {
 }
 
 type extractSummary struct {
-	OutputPath     string               `json:"output_path"`
-	RecordCount    int                  `json:"record_count"`
-	SkippedRecords int                  `json:"skipped_records"`
-	RedactionCount int                  `json:"redaction_count"`
-	PerModel       map[string]breakdown `json:"per_model"`
-	PerGrouping    map[string]breakdown `json:"per_grouping"`
-	InputTokens    int                  `json:"input_tokens"`
-	OutputTokens   int                  `json:"output_tokens"`
-	Warnings       []string             `json:"warnings,omitempty"`
+	OutputPath          string               `json:"output_path"`
+	RecordCount         int                  `json:"record_count"`
+	SkippedRecords      int                  `json:"skipped_records"`
+	RedactionCount      int                  `json:"redaction_count"`
+	VerifiedSecretCount int                  `json:"verified_secret_count,omitempty"`
+	VerifiedSecrets     []string             `json:"verified_secrets,omitempty"`
+	PerModel            map[string]breakdown `json:"per_model"`
+	PerGrouping         map[string]breakdown `json:"per_grouping"`
+	InputTokens         int                  `json:"input_tokens"`
+	OutputTokens        int                  `json:"output_tokens"`
+	Warnings            []string             `json:"warnings,omitempty"`
 }
 
 type sourceSelection struct {
@@ -117,6 +119,7 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 				Warnings:    make([]string, 0),
 			}
 			seenRecordIDs := make(map[string]struct{})
+			seenVerifiedLabels := make(map[string]struct{})
 			seenWarnings := make(map[string]struct{})
 			var warnMu sync.Mutex
 			addWarning := func(message string) {
@@ -134,14 +137,15 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 			}
 
 			if err := runExtraction(cmd.Context(), runExtractionArgs{
-				rt:                rt,
-				selections:        selections,
-				pipeline:          pipeline,
-				suppressReasoning: suppressReasoning,
-				writer:            writer,
-				summary:           &summary,
-				seenRecordIDs:     seenRecordIDs,
-				addWarning:        addWarning,
+				rt:                 rt,
+				selections:         selections,
+				pipeline:           pipeline,
+				suppressReasoning:  suppressReasoning,
+				writer:             writer,
+				summary:            &summary,
+				seenRecordIDs:      seenRecordIDs,
+				seenVerifiedLabels: seenVerifiedLabels,
+				addWarning:         addWarning,
 			}); err != nil {
 				return err
 			}
@@ -279,21 +283,23 @@ func sourcePriority(name string) int {
 }
 
 type runExtractionArgs struct {
-	rt                *runtime
-	selections        []sourceSelection
-	pipeline          *redact.Pipeline
-	suppressReasoning bool
-	writer            *bufio.Writer
-	summary           *extractSummary
-	seenRecordIDs     map[string]struct{}
-	addWarning        func(string)
+	rt                 *runtime
+	selections         []sourceSelection
+	pipeline           *redact.Pipeline
+	suppressReasoning  bool
+	writer             *bufio.Writer
+	summary            *extractSummary
+	seenRecordIDs      map[string]struct{}
+	seenVerifiedLabels map[string]struct{}
+	addWarning         func(string)
 }
 
 type emitted struct {
-	record     schema.Record
-	data       []byte
-	redactions int
-	invalid    bool
+	record          schema.Record
+	data            []byte
+	redactions      int
+	verifiedSecrets []string
+	invalid         bool
 }
 
 func runExtraction(parent context.Context, args runExtractionArgs) error {
@@ -355,9 +361,9 @@ func extractBucket(
 							record.Turns[idx].Reasoning = ""
 						}
 					}
-					redacted, count := args.pipeline.ApplyRecord(record)
+					redacted, stats := args.pipeline.ApplyRecord(record)
 
-					rec := emitted{record: redacted, redactions: count}
+					rec := emitted{record: redacted, redactions: stats.Redactions, verifiedSecrets: stats.VerifiedSecrets}
 					if err := schema.ValidateRecord(redacted); err != nil {
 						args.rt.logger.Debug("skip invalid record", "record_id", record.RecordID, "error", err)
 						rec = emitted{invalid: true}
@@ -407,6 +413,16 @@ func extractBucket(
 		}
 		args.summary.RecordCount++
 		args.summary.RedactionCount += rec.redactions
+		for _, label := range rec.verifiedSecrets {
+			if _, dup := args.seenVerifiedLabels[label]; dup {
+				continue
+			}
+			args.seenVerifiedLabels[label] = struct{}{}
+			args.summary.VerifiedSecretCount++
+			if len(args.summary.VerifiedSecrets) < 20 {
+				args.summary.VerifiedSecrets = append(args.summary.VerifiedSecrets, label)
+			}
+		}
 		args.summary.InputTokens += rec.record.Usage.InputTokens
 		args.summary.OutputTokens += rec.record.Usage.OutputTokens
 		updateBreakdown(args.summary.PerModel, rec.record.Model, rec.record)

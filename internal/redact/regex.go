@@ -98,13 +98,10 @@ func (d *Detector) Scan(input string) Findings {
 	return findings
 }
 
-// ScanInto folds regex hits into the caller-supplied Findings so a later
-// trufflehog pass can share the same seenTokens dedup set and avoid
-// double-counting keys matched by both engines.
+// ScanInto merges hits from input into findings. Reusing the same
+// *Findings across multiple scanners (e.g. regex + trufflehog) dedups
+// token-like matches by their raw value via Findings.markToken.
 func (d *Detector) ScanInto(input string, findings *Findings) {
-	if findings == nil {
-		return
-	}
 	for _, pattern := range d.patterns {
 		matches := pattern.regex.FindAllStringSubmatch(input, -1)
 		for _, match := range matches {

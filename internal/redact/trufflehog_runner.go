@@ -38,9 +38,10 @@ func newTrufflehogRunner(ds []thdet.Detector, verify bool) *trufflehogRunner {
 }
 
 // Redact finds secrets via the configured detectors and replaces each
-// raw match with PlaceholderMarker. Returns the rewritten string and the
-// number of unique replacements performed.
-func (r *trufflehogRunner) Redact(input string) (string, int) {
+// raw match with PlaceholderMarker. When stats is non-nil, verified
+// results (Result.Verified) are recorded there so callers of
+// Pipeline.ApplyRecord can surface them in summaries.
+func (r *trufflehogRunner) Redact(input string, stats *ApplyStats) (string, int) {
 	if r == nil || r.core == nil || input == "" {
 		return input, 0
 	}
@@ -67,6 +68,9 @@ func (r *trufflehogRunner) Redact(input string) (string, int) {
 				if raw == "" {
 					continue
 				}
+				if result.Verified && stats != nil {
+					stats.recordVerified(raw, findingLabel(result))
+				}
 				if _, dup := seen[raw]; dup {
 					continue
 				}
@@ -80,10 +84,10 @@ func (r *trufflehogRunner) Redact(input string) (string, int) {
 	return out, count
 }
 
-// Scan reports detector hits into findings. Every raw match contributes
-// once to TokenCount; keys confirmed by a verifier contribute once to
-// VerifiedSecretCount. The same key seen across multiple detectors is
-// counted at most once in each category.
+// Scan reports detector hits into findings. Raw values are deduped via
+// Findings.markToken so tokens already counted by a regex pass on the
+// same findings don't get counted again. Keys confirmed by a verifier
+// contribute once to VerifiedSecretCount.
 func (r *trufflehogRunner) Scan(input string, findings *Findings) {
 	if r == nil || r.core == nil || input == "" || findings == nil {
 		return
