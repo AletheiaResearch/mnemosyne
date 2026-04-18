@@ -79,6 +79,7 @@ func newRootCommand(rt *runtime) *cobra.Command {
 		newValidateCommand(rt),
 		newRunlogCommand(rt),
 		newSerializersCommand(),
+		newTemplatesCommand(),
 	)
 	return cmd
 }
