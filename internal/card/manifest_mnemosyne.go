@@ -127,9 +127,12 @@ func ParseManifestMnemosyne(r io.Reader) (ManifestHeader, []ManifestEntry, error
 
 // DiffManifestSessions compares local entries against what the remote manifest
 // already holds. An entry is in toUpload when the remote has no file with the
-// same name, or the remote's source_hash or redaction_key differs from the
-// local entry. toRetain contains remote entries that survive (still exist
-// locally unchanged, or only exist remotely).
+// same name, or when any of source_hash, redaction_key, or redacted_hash
+// differ. redacted_hash is part of the comparison because it is what the
+// published manifest advertises for the uploaded bytes — skipping an upload
+// while overwriting the manifest's redacted_hash would leave the repo
+// advertising bytes it does not contain. toRetain contains remote entries
+// that survive (still exist locally unchanged, or only exist remotely).
 func DiffManifestSessions(local, remote []ManifestEntry) (toUpload, toRetain []ManifestEntry) {
 	remoteByFile := make(map[string]ManifestEntry, len(remote))
 	for _, entry := range remote {
@@ -143,7 +146,10 @@ func DiffManifestSessions(local, remote []ManifestEntry) (toUpload, toRetain []M
 	toUpload = make([]ManifestEntry, 0)
 	for _, entry := range local {
 		existing, ok := remoteByFile[entry.File]
-		if !ok || existing.SourceHash != entry.SourceHash || existing.RedactionKey != entry.RedactionKey {
+		if !ok ||
+			existing.SourceHash != entry.SourceHash ||
+			existing.RedactionKey != entry.RedactionKey ||
+			existing.RedactedHash != entry.RedactedHash {
 			toUpload = append(toUpload, entry)
 		}
 	}

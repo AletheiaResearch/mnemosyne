@@ -433,10 +433,16 @@ func TestPublishIsolate_RejectsTamperedStaging(t *testing.T) {
 			t.Errorf("nothing should ship after tamper detection; saw %q", name)
 		}
 	}
+	// The dataset repo must not be created when preflight fails: a
+	// successful publish has a `repos create` in the hf log, so its
+	// absence confirms the remote was left untouched.
+	if log := shim.readLog(t); strings.Contains(log, "repos create") {
+		t.Errorf("repos create invoked despite preflight failure:\n%s", log)
+	}
 }
 
 func TestPublishIsolate_RequiresPriorExtract(t *testing.T) {
-	_ = installHFShim(t)
+	shim := installHFShim(t)
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
 
 	// Minimal valid attested config with NO IsolateSessions.
@@ -469,5 +475,8 @@ func TestPublishIsolate_RequiresPriorExtract(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "extract --isolate") {
 		t.Fatalf("expected extract-first error, got: %v", err)
+	}
+	if log := shim.readLog(t); strings.Contains(log, "repos create") {
+		t.Errorf("repos create must not run when preflight fails:\n%s", log)
 	}
 }

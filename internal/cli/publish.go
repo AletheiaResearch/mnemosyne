@@ -67,6 +67,15 @@ func newPublishCommand(rt *runtime) *cobra.Command {
 				repoID = identity.Username + "/mnemosyne-traces"
 			}
 
+			// Validate all local preconditions before any remote side
+			// effect. EnsureDatasetRepo creates the dataset repo, so a
+			// failure afterwards would leave an empty repo behind.
+			if isolate {
+				if err := validateIsolatePreflight(cfg); err != nil {
+					return err
+				}
+			}
+
 			if err := publish.EnsureDatasetRepo(repoID); err != nil {
 				return err
 			}
@@ -137,11 +146,31 @@ func runCanonicalPublish(cmd *cobra.Command, rt *runtime, cfg config.Config, rep
 	})
 }
 
-func runIsolatePublish(cmd *cobra.Command, rt *runtime, cfg config.Config, repoID, publishAttestation string) error {
+// validateIsolatePreflight checks every local precondition for
+// `publish --isolate` before any remote side effect. It verifies that a
+// prior `extract --isolate` ran and that each staging file still hashes
+// to the manifest's redacted_hash, so the command can fail fast without
+// creating the dataset repo on the hub.
+func validateIsolatePreflight(cfg config.Config) error {
 	if cfg.LastExtract == nil || len(cfg.LastExtract.IsolateSessions) == 0 {
 		return errors.New("publish --isolate requires extract --isolate first")
 	}
+	for _, session := range cfg.LastExtract.IsolateSessions {
+		if _, err := os.Stat(session.StagingPath); err != nil {
+			return fmt.Errorf("staging file %s: %w", session.StagingPath, err)
+		}
+		diskHash, err := hashStagingFile(session.StagingPath)
+		if err != nil {
+			return fmt.Errorf("hash staging file %s: %w", session.StagingPath, err)
+		}
+		if diskHash != session.RedactedHash {
+			return fmt.Errorf("staging file %s changed after extract (hash %s, manifest %s); re-run extract --isolate", session.StagingPath, diskHash, session.RedactedHash)
+		}
+	}
+	return nil
+}
 
+func runIsolatePublish(cmd *cobra.Command, rt *runtime, cfg config.Config, repoID, publishAttestation string) error {
 	localEntries := make([]card.ManifestEntry, 0, len(cfg.LastExtract.IsolateSessions))
 	for _, session := range cfg.LastExtract.IsolateSessions {
 		localEntries = append(localEntries, card.ManifestEntry{
@@ -177,16 +206,6 @@ func runIsolatePublish(cmd *cobra.Command, rt *runtime, cfg config.Config, repoI
 		session, ok := uploadByFile[entry.File]
 		if !ok {
 			return fmt.Errorf("isolate session missing staging path for %s", entry.File)
-		}
-		if _, err := os.Stat(session.StagingPath); err != nil {
-			return fmt.Errorf("staging file %s: %w", session.StagingPath, err)
-		}
-		diskHash, err := hashStagingFile(session.StagingPath)
-		if err != nil {
-			return fmt.Errorf("hash staging file %s: %w", session.StagingPath, err)
-		}
-		if diskHash != session.RedactedHash {
-			return fmt.Errorf("staging file %s changed after extract (hash %s, manifest %s); re-run extract --isolate", session.StagingPath, diskHash, session.RedactedHash)
 		}
 		if err := publish.UploadFile(repoID, session.StagingPath, entry.File, commitMessage); err != nil {
 			return err

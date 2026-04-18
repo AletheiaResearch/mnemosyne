@@ -135,6 +135,24 @@ func TestDiffManifestSessions_FourQuadrants(t *testing.T) {
 	}
 }
 
+// A local entry whose source_hash and redaction_key match the remote but
+// whose redacted_hash differs MUST still upload, otherwise publish would
+// overwrite the manifest with a new redacted_hash that does not describe
+// the bytes in the repo.
+func TestDiffManifestSessions_RedactedHashDivergence(t *testing.T) {
+	t.Parallel()
+	local := []ManifestEntry{
+		{File: "a.jsonl", SourceHash: "sha256:a", RedactionKey: "v1:keep", RedactedHash: "sha256:NEW"},
+	}
+	remote := []ManifestEntry{
+		{File: "a.jsonl", SourceHash: "sha256:a", RedactionKey: "v1:keep", RedactedHash: "sha256:OLD"},
+	}
+	toUpload, _ := DiffManifestSessions(local, remote)
+	if len(toUpload) != 1 || toUpload[0].File != "a.jsonl" {
+		t.Fatalf("divergent redacted_hash must force upload; got: %+v", toUpload)
+	}
+}
+
 func TestMergeManifestEntries_LocalWinsOnCollision(t *testing.T) {
 	t.Parallel()
 	local := []ManifestEntry{
