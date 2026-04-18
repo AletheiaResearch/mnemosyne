@@ -182,7 +182,13 @@ func (s *Source) parseSession(path string) (schema.Record, error) {
 		return schema.Record{}, err
 	}
 	recordID := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	return assembleClaudeRecord(entries, recordID), nil
+	record := assembleClaudeRecord(entries, recordID)
+	record.Provenance = &schema.Provenance{
+		SourcePath:   path,
+		SourceID:     recordID,
+		SourceOrigin: "claudecode",
+	}
+	return record, nil
 }
 
 func (s *Source) parseSubagents(projectDir, sessionID, subagentDir string) (schema.Record, error) {
@@ -212,7 +218,13 @@ func (s *Source) parseSubagents(projectDir, sessionID, subagentDir string) (sche
 	if source.FileExists(filepath.Join(projectDir, sessionID+".jsonl")) {
 		recordID += ":subagents"
 	}
-	return assembleClaudeRecord(entries, recordID), nil
+	record := assembleClaudeRecord(entries, recordID)
+	record.Provenance = &schema.Provenance{
+		SourcePath:   subagentDir,
+		SourceID:     recordID,
+		SourceOrigin: "claudecode-subagents",
+	}
+	return record, nil
 }
 
 func assembleClaudeRecord(entries []map[string]any, recordID string) schema.Record {

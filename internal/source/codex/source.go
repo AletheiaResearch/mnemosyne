@@ -341,6 +341,11 @@ func (s *Source) parseFile(path string) (schema.Record, error) {
 		InputTokens:    inputTokens,
 		OutputTokens:   outputTokens,
 	}
+	record.Provenance = &schema.Provenance{
+		SourcePath:   path,
+		SourceID:     record.RecordID,
+		SourceOrigin: "codex",
+	}
 	return record, nil
 }
 
