@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AletheiaResearch/mnemosyne/schemas/tool-catalog-v1.json",
+  "title": "Mnemosyne Tool Catalog",
+  "description": "JSON shape accepted by `mnemosyne transform --tools-file` and by the bundled per-harness tool catalogs under internal/serialize/toolcatalog/. Each entry describes one callable tool; both the OpenAI-wrapped form (`{type: \"function\", function: {...}}`) and the flat form (`{name, description, parameters}`) are accepted.",
+  "type": "array",
+  "items": {
+    "$ref": "#/$defs/toolEntry"
+  },
+  "$defs": {
+    "toolEntry": {
+      "oneOf": [
+        { "$ref": "#/$defs/wrappedTool" },
+        { "$ref": "#/$defs/flatTool" }
+      ]
+    },
+    "wrappedTool": {
+      "type": "object",
+      "description": "OpenAI-style wrapper: the tool metadata sits under `function`.",
+      "required": ["function"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Tool kind. Defaults to \"function\" when omitted.",
+          "default": "function"
+        },
+        "function": {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Unique tool identifier. Matches the name emitted in assistant tool_calls."
+            },
+            "description": {
+              "type": "string",
+              "description": "One-line description of the tool's behaviour."
+            },
+            "parameters": { "$ref": "#/$defs/parameters" },
+            "return": { "$ref": "#/$defs/schemaObject" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "flatTool": {
+      "type": "object",
+      "description": "Flat shape: name/description/parameters live at the top level of the entry.",
+      "required": ["name"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Tool kind. Defaults to \"function\" when omitted.",
+          "default": "function"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique tool identifier. Matches the name emitted in assistant tool_calls."
+        },
+        "description": {
+          "type": "string",
+          "description": "One-line description of the tool's behaviour."
+        },
+        "parameters": { "$ref": "#/$defs/parameters" },
+        "return": { "$ref": "#/$defs/schemaObject" }
+      },
+      "not": { "required": ["function"] },
+      "additionalProperties": false
+    },
+    "parameters": {
+      "description": "JSON-Schema describing the tool's input arguments. Typically `{type: \"object\", properties: {...}, required: [...]}`.",
+      "allOf": [
+        { "$ref": "#/$defs/schemaObject" },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "description": "Top-level parameters are conventionally a JSON object.",
+              "const": "object"
+            },
+            "properties": {
+              "type": "object",
+              "additionalProperties": { "$ref": "#/$defs/schemaObject" }
+            },
+            "required": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            }
+          }
+        }
+      ]
+    },
+    "schemaObject": {
+      "description": "A JSON-Schema fragment. Left open so catalog authors can use any draft-2020-12 keywords (enum, items, oneOf, etc.).",
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}
