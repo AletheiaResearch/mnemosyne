@@ -62,6 +62,8 @@ func ForOrigin(origin string) (Redactor, bool) {
 	switch origin {
 	case "claudecode":
 		return ClaudeCode(), true
+	case "codex":
+		return Codex(), true
 	default:
 		return nil, false
 	}

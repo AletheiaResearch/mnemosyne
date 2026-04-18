@@ -116,6 +116,7 @@ type fixtureCase struct {
 func fixtureCases() []fixtureCase {
 	return []fixtureCase{
 		{"claudecode", "claudecode-session.jsonl", ClaudeCode()},
+		{"codex", "codex-session.jsonl", Codex()},
 	}
 }
 
@@ -313,8 +314,10 @@ func TestRedact_HomePathAnonymized(t *testing.T) {
 
 func TestForOrigin(t *testing.T) {
 	t.Parallel()
-	if _, ok := ForOrigin("claudecode"); !ok {
-		t.Errorf("expected handler for claudecode")
+	for _, origin := range []string{"claudecode", "codex"} {
+		if _, ok := ForOrigin(origin); !ok {
+			t.Errorf("expected handler for %q", origin)
+		}
 	}
 	if _, ok := ForOrigin("cursor"); ok {
 		t.Errorf("cursor should not have a native handler yet")
