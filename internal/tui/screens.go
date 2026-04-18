@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/AletheiaResearch/mnemosyne/internal/attest"
 	"github.com/AletheiaResearch/mnemosyne/internal/config"
 	"github.com/AletheiaResearch/mnemosyne/internal/tui/common"
 )
@@ -213,7 +214,7 @@ func newScreen(key screenKey, configPath string) tea.Model {
 			configPath: configPath,
 			fields: []formField{
 				textField("Dataset Repo", cfg.DestinationRepo, "username/mnemosyne-traces"),
-				textField("Publication Attestation", "", "I approve publication of this reviewed export."),
+				textField("Publication Attestation", "", attest.DefaultPublishAttestationPlaceholder),
 			},
 			buildArgs: func(s *formScreen) []string {
 				args := []string{"publish"}

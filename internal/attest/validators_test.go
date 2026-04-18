@@ -25,3 +25,11 @@ func TestValidatePublishAttestation(t *testing.T) {
 		t.Fatalf("expected publish attestation to pass: %v", err)
 	}
 }
+
+func TestDefaultPublishAttestationPlaceholderPasses(t *testing.T) {
+	t.Parallel()
+
+	if err := ValidatePublishAttestation(DefaultPublishAttestationPlaceholder); err != nil {
+		t.Fatalf("UI-suggested placeholder must satisfy the validator: %v", err)
+	}
+}
