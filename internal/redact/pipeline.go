@@ -122,7 +122,16 @@ func New(opts Options) (*Pipeline, error) {
 			literals = append(literals, item)
 		}
 	}
-	slices.Sort(literals)
+	// Longest-first so overlapping custom literals (e.g. `abc` configured
+	// alongside `abcdef`) can't strip the prefix of a longer secret
+	// before its full form is replaced, leaving the remaining suffix
+	// exposed. Ties break lexicographically for deterministic ordering.
+	slices.SortFunc(literals, func(a, b string) int {
+		if len(a) != len(b) {
+			return len(b) - len(a)
+		}
+		return strings.Compare(a, b)
+	})
 
 	ds := opts.Detectors
 	if ds == nil {

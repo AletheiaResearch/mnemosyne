@@ -39,6 +39,42 @@ func posthogScanners() []thdet.Detector {
 	}
 }
 
+// TestPipelineCustomRedactionsLongestLiteralFirst guards the overlap
+// regression reported on PR thread PRRT_kwDOSFNLc857-Z7u: when two
+// custom literals overlap (e.g. abc and abcdef), a lexicographic sort
+// replaces the shorter one first and leaves the suffix `def` of the
+// longer secret exposed in the output.
+//
+// Inputs are plain alphabetic tokens without any token/secret/bearer
+// shape so the regex detector can't independently redact them and mask
+// a regression in the literal loop.
+func TestPipelineCustomRedactionsLongestLiteralFirst(t *testing.T) {
+	t.Parallel()
+
+	pipeline, err := New(Options{
+		CustomRedactions: []string{"abc", "abcdef"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	input := "plain marker abcdef end\nalso plain abc here"
+	out := pipeline.applyText(input, &ApplyStats{})
+
+	if strings.Contains(out, "abcdef") {
+		t.Fatalf("longer literal leaked: %q", out)
+	}
+	if strings.Contains(out, "def") {
+		t.Fatalf("suffix of longer literal leaked after shorter literal ran first: %q", out)
+	}
+	if strings.Contains(out, "abc") {
+		t.Fatalf("shorter literal still visible: %q", out)
+	}
+	if strings.Count(out, PlaceholderMarker) != 2 {
+		t.Fatalf("expected exactly two placeholder markers, got %q", out)
+	}
+}
+
 // TestPipelineRedactsPostHogKeys asserts every PostHog key variant gets
 // replaced by the placeholder marker. Detection is regex-only; the
 // pipeline never issues network calls for PostHog matches.
