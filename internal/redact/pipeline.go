@@ -13,6 +13,7 @@ import (
 	"github.com/AletheiaResearch/mnemosyne/internal/config"
 	"github.com/AletheiaResearch/mnemosyne/internal/redact/detectors"
 	_ "github.com/AletheiaResearch/mnemosyne/internal/redact/detectors/posthog"
+	_ "github.com/AletheiaResearch/mnemosyne/internal/redact/detectors/sparkscan"
 	"github.com/AletheiaResearch/mnemosyne/internal/schema"
 )
 
