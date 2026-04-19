@@ -106,7 +106,8 @@ func (r *trufflehogRunner) Redact(input string, stats *ApplyStats) (string, int)
 				// AWS_SECRET_ACCESS_KEY=... on separate lines. Stripping
 				// Raw alone redacts the ID but leaves the secret visible,
 				// so split RawV2 on Raw and scrub each remaining segment.
-				if combinedHits == 0 && raw != "" && rawV2 != "" && rawV2 != raw && strings.Contains(rawV2, raw) {
+				switch {
+				case combinedHits == 0 && raw != "" && rawV2 != "" && rawV2 != raw && strings.Contains(rawV2, raw):
 					for _, part := range strings.Split(rawV2, raw) {
 						part = strings.Trim(part, ":;,=|& \t\r\n\"'<>()[]{}")
 						if part == "" {
@@ -115,6 +116,27 @@ func (r *trufflehogRunner) Redact(input string, stats *ApplyStats) (string, int)
 						replaced, n := stringsReplaceAll(out, part, PlaceholderMarker)
 						out = replaced
 						count += n
+					}
+				case combinedHits == 0 && rawV2 != "" && rawV2 != raw:
+					// RawV2 is a compound of components that don't
+					// include Raw (e.g. CexIO emits Raw=apiKey,
+					// RawV2=userId+secret). Walk every split point
+					// and redact both halves if each appears
+					// independently in the output. minPart avoids
+					// false positives on short prefixes/suffixes.
+					const minPart = 8
+					for i := minPart; i <= len(rawV2)-minPart; i++ {
+						left, right := rawV2[:i], rawV2[i:]
+						if !strings.Contains(out, left) || !strings.Contains(out, right) {
+							continue
+						}
+						replaced, n := stringsReplaceAll(out, left, PlaceholderMarker)
+						out = replaced
+						count += n
+						replaced, n = stringsReplaceAll(out, right, PlaceholderMarker)
+						out = replaced
+						count += n
+						break
 					}
 				}
 			}

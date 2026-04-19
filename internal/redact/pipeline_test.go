@@ -385,6 +385,51 @@ func TestTrufflehogRunnerRedactsMultipartSecretSplitAcrossLines(t *testing.T) {
 	}
 }
 
+// TestTrufflehogRunnerRedactsCompoundRawV2SplitAcrossLines guards the
+// CexIO-shaped case where Raw is the API key but RawV2 is userId +
+// secret — so `strings.Contains(rawV2, raw)` is false and the
+// split-on-Raw fallback doesn't apply. When the three components sit
+// on separate lines, the fallback must still redact userId and secret
+// alongside the API key. Labels are deliberately neutral
+// (handle/actor/material) so the regex pass's generic_assign /
+// env_assign patterns don't independently redact either half and mask
+// a regression in the compound-RawV2 fallback.
+func TestTrufflehogRunnerRedactsCompoundRawV2SplitAcrossLines(t *testing.T) {
+	t.Parallel()
+
+	const (
+		apiKey = "AAABBBBCCCCDDDDEEEEEFFFF"
+		userID = "gb123456789"
+		secret = "ZZZZYYYYXXXXWWWWVVVVUUUU"
+	)
+	det := &multipartDetector{
+		keyword: "AAAB",
+		emit: []multipartResult{
+			{raw: apiKey, rawV2: userID + secret},
+		},
+	}
+	pipeline, err := New(Options{Detectors: []thdet.Detector{det}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	input := "handle: " + apiKey + "\nactor: " + userID + "\nmaterial: " + secret
+	out := pipeline.applyText(input, &ApplyStats{})
+
+	if strings.Contains(out, apiKey) {
+		t.Fatalf("api key leaked: %q", out)
+	}
+	if strings.Contains(out, userID) {
+		t.Fatalf("user id leaked when RawV2 compound isn't contiguous: %q", out)
+	}
+	if strings.Contains(out, secret) {
+		t.Fatalf("secret leaked when RawV2 compound isn't contiguous: %q", out)
+	}
+	if strings.Count(out, PlaceholderMarker) < 2 {
+		t.Fatalf("expected at least two placeholder markers (api key + split halves), got %q", out)
+	}
+}
+
 // TestScanRecordDedupsMultipartAcrossRegexAndTrufflehog guards the
 // cross-detector TokenCount dedup for multipart credentials: an Algolia
 // app-id + API-key pair caught by both the regex pass (on the api_key=
