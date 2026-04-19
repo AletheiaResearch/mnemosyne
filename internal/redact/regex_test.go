@@ -73,4 +73,3 @@ func TestAnonymizerDoesNotRewriteShortHandlePrefixCollisions(t *testing.T) {
 		t.Fatalf("expected unrelated path to stay unchanged, got %q", out)
 	}
 }
-
