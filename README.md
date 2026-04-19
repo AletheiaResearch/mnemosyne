@@ -1,5 +1,7 @@
 # Mnemosyne
 
+[![codecov](https://codecov.io/gh/AletheiaResearch/mnemosyne/graph/badge.svg?token=30GNZ9jczC)](https://codecov.io/gh/AletheiaResearch/mnemosyne)
+
 Export coding-assistant conversation histories to a unified, anonymized dataset.
 
 Supports Claude Code, Codex, Cursor, Gemini CLI, Kimi CLI, OpenClaw, opencode, and Conductor-style orchestrators. Output stays local unless you explicitly publish.

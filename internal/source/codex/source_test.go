@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -248,6 +249,9 @@ func TestExtractReportsWarningsOnUnreadableFile(t *testing.T) {
 
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses file permissions; cannot force parseFile error")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not enforce POSIX permission bits for this fixture")
 	}
 
 	src, active, _ := newCodexSource(t)

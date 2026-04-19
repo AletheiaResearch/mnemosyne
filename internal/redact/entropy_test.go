@@ -8,12 +8,12 @@ import (
 func TestRedactHighEntropyReplacesMixedClassSecrets(t *testing.T) {
 	t.Parallel()
 
-	input := `token = "AbcdefGhij0123KLMNopQRST" and key = "Zy9wV8uT7sR6qP5oN4mL3kJ2"`
+	input := `token = "TESTONLY_A1b2C3d4E5f6G7h8I9j0K1" and key = "TESTONLY_Z9y8X7w6V5u4T3s2R1q0P9"`
 	out, count := redactHighEntropy(input)
 	if count < 2 {
 		t.Fatalf("expected both secrets redacted, got count=%d out=%q", count, out)
 	}
-	if strings.Contains(out, "AbcdefGhij0123KLMNopQRST") {
+	if strings.Contains(out, "TESTONLY_A1b2C3d4E5f6G7h8I9j0K1") {
 		t.Fatalf("high-entropy secret leaked: %q", out)
 	}
 	if !strings.Contains(out, PlaceholderMarker) {
@@ -46,7 +46,7 @@ func TestRedactHighEntropyRequiresMixedCharacterClasses(t *testing.T) {
 func TestScanEntropyRespectsLimitAndContextWindow(t *testing.T) {
 	t.Parallel()
 
-	input := `a="AbcdefGhij0123KLMNopQRST" b="ZyxWvu9876TsrQpoNmLkJiHg" c="MnBvCxZaSdFgHjKlPoIuYtRe"`
+	input := `a="TESTONLY_A1b2C3d4E5f6G7h8I9j0K1" b="TESTONLY_Z9y8X7w6V5u4T3s2R1q0P9" c="TESTONLY_M7n6B5v4C3x2Z1a0S9d8"`
 	findings := ScanEntropy(input, 2)
 	if len(findings) != 2 {
 		t.Fatalf("expected limit of 2 findings, got %d: %+v", len(findings), findings)
