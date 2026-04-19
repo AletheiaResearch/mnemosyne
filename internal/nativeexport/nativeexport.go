@@ -190,10 +190,15 @@ func redactFile(ctx context.Context, srcPath, dstPath, format string, opts Optio
 }
 
 func processLine(raw []byte, opts Options, pre preProcess, detect sessionDetect) (out []byte, sessionID string, err error) {
-	var line map[string]any
-	if unmarshalErr := json.Unmarshal(raw, &line); unmarshalErr != nil {
-		// Pass-through for non-object lines (rare). Apply a plain text redact
-		// pass so secrets embedded in free-form lines don't leak.
+	var decoded any
+	if unmarshalErr := json.Unmarshal(raw, &decoded); unmarshalErr != nil {
+		return nil, "", unmarshalErr
+	}
+	line, ok := decoded.(map[string]any)
+	if !ok {
+		// Valid JSON but not an object (number, string, array, bool, null).
+		// Apply a plain text redact pass so secrets embedded in free-form
+		// lines don't leak, and preserve the original scalar encoding.
 		return []byte(opts.Pipeline.ApplyText(string(raw))), "", nil
 	}
 	if detect != nil {

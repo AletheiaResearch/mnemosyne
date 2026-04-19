@@ -400,6 +400,52 @@ func TestRedactCodex_SessionIDFromSessionMeta(t *testing.T) {
 	}
 }
 
+// Malformed JSON must surface as an error so callers can abort the extract
+// rather than ship a corrupted, un-redacted line downstream. A valid top-level
+// non-object (rare but legal JSONL) takes the text-redact fallback instead.
+func TestRedact_MalformedJSONLineErrors(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	src := filepath.Join(dir, "broken.jsonl")
+	// A malformed line: missing closing brace. Embeds a secret to make sure
+	// the pass-through bug (if reintroduced) would be caught by the assertion
+	// that no output exists.
+	broken := `{"type":"user","message":{"content":"sk-abcdefghijklmnopqrstuvwxyz0123"` + "\n"
+	if err := os.WriteFile(src, []byte(broken), 0o644); err != nil {
+		t.Fatalf("write broken fixture: %v", err)
+	}
+	dst := filepath.Join(dir, "out.jsonl")
+	_, err := ClaudeCode().Redact(context.Background(), src, dst,
+		Options{Pipeline: newPipeline(t), AttachImages: true})
+	if err == nil {
+		t.Fatalf("expected redact to fail on malformed JSON, got nil")
+	}
+}
+
+func TestRedact_ValidNonObjectLineIsTextRedacted(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	src := filepath.Join(dir, "scalar.jsonl")
+	// A valid JSONL line that is not an object (a quoted string). Rare, but
+	// must not error — the text-redact fallback should scrub any secret.
+	scalar := `"sk-abcdefghijklmnopqrstuvwxyz0123"` + "\n"
+	if err := os.WriteFile(src, []byte(scalar), 0o644); err != nil {
+		t.Fatalf("write scalar fixture: %v", err)
+	}
+	dst := filepath.Join(dir, "out.jsonl")
+	if _, err := ClaudeCode().Redact(context.Background(), src, dst,
+		Options{Pipeline: newPipeline(t), AttachImages: true}); err != nil {
+		t.Fatalf("redact: %v", err)
+	}
+	out, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("read dst: %v", err)
+	}
+	if strings.Contains(string(out), "sk-abcdefghijklmnopqrstuvwxyz0123") {
+		t.Fatalf("secret survived non-object text redact fallback: %q", out)
+	}
+}
+
 func TestForOrigin(t *testing.T) {
 	t.Parallel()
 	for _, origin := range []string{"claudecode", "codex"} {
