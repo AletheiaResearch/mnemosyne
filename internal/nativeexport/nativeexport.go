@@ -86,7 +86,7 @@ type sessionDetect func(line map[string]any) string
 // redactFile performs the streaming read/walk/write and hashing shared by all
 // formats. Each format supplies a preProcess hook for its image stripping
 // logic and an optional sessionDetect for extracting the session id in-band.
-func redactFile(ctx context.Context, srcPath, dstPath, format string, opts Options, pre preProcess, detect sessionDetect) (Result, error) {
+func redactFile(ctx context.Context, srcPath, dstPath, format string, opts Options, pre preProcess, detect sessionDetect) (result Result, err error) {
 	if opts.Pipeline == nil {
 		return Result{}, errors.New("nativeexport: Options.Pipeline is required")
 	}
@@ -98,7 +98,11 @@ func redactFile(ctx context.Context, srcPath, dstPath, format string, opts Optio
 	if err != nil {
 		return Result{}, fmt.Errorf("open source: %w", err)
 	}
-	defer srcFile.Close()
+	defer func() {
+		if closeErr := srcFile.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close source: %w", closeErr)
+		}
+	}()
 
 	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
 		return Result{}, fmt.Errorf("ensure staging dir: %w", err)
@@ -107,7 +111,15 @@ func redactFile(ctx context.Context, srcPath, dstPath, format string, opts Optio
 	if err != nil {
 		return Result{}, fmt.Errorf("create staging file: %w", err)
 	}
-	defer dstFile.Close()
+	// A failed Close on the staging file means buffered bytes may not have
+	// reached disk even though dstHasher already consumed them, so the
+	// RedactedHash would no longer describe the on-disk artifact. Surface
+	// the error instead of swallowing it.
+	defer func() {
+		if closeErr := dstFile.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close staging file: %w", closeErr)
+		}
+	}()
 
 	srcHasher := sha256.New()
 	dstHasher := sha256.New()
@@ -128,9 +140,9 @@ func redactFile(ctx context.Context, srcPath, dstPath, format string, opts Optio
 		if len(strings.TrimSpace(string(raw))) == 0 {
 			continue
 		}
-		rewritten, foundID, err := processLine(raw, opts, pre, detect)
-		if err != nil {
-			return Result{}, fmt.Errorf("process line %d: %w", lines+1, err)
+		rewritten, foundID, processErr := processLine(raw, opts, pre, detect)
+		if processErr != nil {
+			return Result{}, fmt.Errorf("process line %d: %w", lines+1, processErr)
 		}
 		if sessionID == "" && foundID != "" {
 			sessionID = foundID
@@ -151,6 +163,9 @@ func redactFile(ctx context.Context, srcPath, dstPath, format string, opts Optio
 	}
 	if err := dstWriter.Flush(); err != nil {
 		return Result{}, fmt.Errorf("flush: %w", err)
+	}
+	if err := dstFile.Sync(); err != nil {
+		return Result{}, fmt.Errorf("sync staging file: %w", err)
 	}
 
 	// Drain the source into the hasher in case the scanner ignored a trailing
