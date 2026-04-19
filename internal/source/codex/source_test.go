@@ -19,7 +19,11 @@ func writeJSONL(t *testing.T, path string, lines []map[string]any) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}()
 	for _, line := range lines {
 		data, err := json.Marshal(line)
 		if err != nil {
