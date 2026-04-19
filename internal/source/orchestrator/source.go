@@ -27,6 +27,12 @@ type Source struct {
 	lookups map[string]source.SessionLookup
 }
 
+// dbSchema is the resolved column-and-table map for a specific orchestrator
+// SQLite file. The orchestrator schema has drifted across releases — tables
+// get renamed (repos → repositories), columns get aliased (name →
+// display_name), and some columns only appear in newer versions. detectSchema
+// populates this struct once per Open so the rest of the extractor can read
+// fields without caring which historical variant it is touching.
 type dbSchema struct {
 	reposTable           string
 	workspacesTable      string
@@ -291,6 +297,12 @@ func (s *Source) open() (*sql.DB, dbSchema, error) {
 	return db, schemaInfo, nil
 }
 
+// detectSchema introspects the SQLite catalog to resolve actual table and
+// column names against the set of historically-used aliases. It returns
+// os.ErrNotExist when any of the four core tables (repos, workspaces,
+// sessions, session_messages) are missing so callers can distinguish
+// "unsupported database" from a genuine IO failure. Individual column names
+// may come back empty when the field is optional in a given schema version.
 func detectSchema(db *sql.DB) (dbSchema, error) {
 	tables, err := tableColumns(db)
 	if err != nil {
@@ -506,6 +518,13 @@ func derivedWorkingDir(repoPath, workspaceLabel string) string {
 	return filepath.Join(repoPath, workspaceLabel)
 }
 
+// preferExternalRecord merges an externally-sourced record (from claudecode,
+// codex, gemini, ...) with the orchestrator's own metadata. The external
+// record's turns and tool calls are preserved verbatim — they are richer than
+// the orchestrator mirror — while the orchestrator overrides origin/grouping,
+// working dir, branch, title, and model, and stuffs the originating record's
+// identifiers into Extensions["orchestrator"] so consumers can trace
+// provenance back to the native store.
 func preferExternalRecord(sessionID, repoLabel, workingDir, branch, model, title, agentType, externalID string, external schema.Record) schema.Record {
 	externalOrigin := external.Origin
 	externalGrouping := external.Grouping
@@ -549,6 +568,13 @@ func preferExternalRecord(sessionID, repoLabel, workingDir, branch, model, title
 	return record
 }
 
+// normalizeAgentType folds the orchestrator's free-form agent_type column
+// into the canonical slugs used for dispatch (claudecode, gemini, kimi, ...).
+// Non-alphanumeric characters are stripped and ASCII letters lowercased so
+// that "Claude Code", "claude-code", and "CLAUDECODE" all collapse to
+// "claudecode". Unrecognised values fall through as their stripped/lowercased
+// form so downstream lookups can still match a source registered under that
+// exact name.
 func normalizeAgentType(agentType string) string {
 	key := strings.Map(func(r rune) rune {
 		switch {
