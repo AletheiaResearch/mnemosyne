@@ -19,6 +19,12 @@ const (
 	personalBody = "abcdefghijklmnopqrstuvwxyz0123456789"
 	flagBody     = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef012345"
 	projectBody  = "abcdefghijklmnopqrstuvwxyz01234567"
+
+	// trailingHyphenBody ends in `-`, a non-word ASCII char. With a
+	// naive `\b`-anchored regex this causes the trailing boundary to
+	// fail; RE2 backtracks one char and returns a key missing its
+	// final byte. 35 `a`s + `-` = 36 chars, satisfying {32,}.
+	trailingHyphenBody = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-"
 )
 
 func TestRegexMatches(t *testing.T) {
@@ -69,6 +75,31 @@ func TestRegexMatches(t *testing.T) {
 			name:    "dedup within a single chunk",
 			scanner: NewPersonalAPIKeyScanner(),
 			input:   "one: " + personalKey + "\ntwo: " + personalKey,
+			want:    []string{personalKey},
+		},
+		{
+			// Regression: ASCII `\b` on a body class that includes
+			// `-` drops the trailing hyphen from the capture. The
+			// full key must round-trip, hyphen and all.
+			name:    "key ending in hyphen captures full body",
+			scanner: NewPersonalAPIKeyScanner(),
+			input:   "Authorization: Bearer " + fakeKey(phxPrefix, trailingHyphenBody),
+			want:    []string{fakeKey(phxPrefix, trailingHyphenBody)},
+		},
+		{
+			// Boundary at start of input: leading alternative
+			// (`^`) in the new regex must match just as `\b` did.
+			name:    "key at start of input matches",
+			scanner: NewPersonalAPIKeyScanner(),
+			input:   personalKey + " trailing prose",
+			want:    []string{personalKey},
+		},
+		{
+			// Boundary at end of input: trailing alternative
+			// (`$`) in the new regex must match just as `\b` did.
+			name:    "key at end of input matches",
+			scanner: NewPersonalAPIKeyScanner(),
+			input:   "prefix prose " + personalKey,
 			want:    []string{personalKey},
 		},
 	}

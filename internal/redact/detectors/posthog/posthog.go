@@ -41,8 +41,16 @@ const (
 // keyRegex returns the bounded match pattern for a given PostHog key
 // prefix. 32+ characters comfortably covers every issued length while
 // rejecting shorter false positives.
+//
+// ASCII `\b` treats `-` as a non-word char, so a key whose final byte
+// is `-` fails the trailing word boundary; RE2 then backtracks one
+// char and returns a truncated capture that leaks the last character
+// of the secret into the output. Explicit non-word-char boundaries
+// hold up regardless of whether the key's ends are word chars.
 func keyRegex(prefix string) *regexp.Regexp {
-	return regexp.MustCompile(`\b(` + regexp.QuoteMeta(prefix) + `[A-Za-z0-9_-]{32,})\b`)
+	return regexp.MustCompile(
+		`(?:^|[^A-Za-z0-9_])(` + regexp.QuoteMeta(prefix) + `[A-Za-z0-9_-]{32,})(?:$|[^A-Za-z0-9_])`,
+	)
 }
 
 // NewPersonalAPIKeyScanner returns a regex-only Scanner for phx_
