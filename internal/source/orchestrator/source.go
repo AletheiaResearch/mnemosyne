@@ -512,7 +512,12 @@ func preferExternalRecord(sessionID, repoLabel, workingDir, branch, model, title
 	externalRecordID := external.RecordID
 
 	record := external
-	record.RecordID = firstNonEmpty(externalID, external.RecordID, sessionID)
+	// Prefer the external source's RecordID over the bare externalID so that
+	// scoped identifiers (e.g. claudecode's "project/session") survive the
+	// orchestrator wrap. The seenRecordIDs dedup in extract collapses the
+	// orchestrator record with the raw source record only when the IDs match
+	// byte-for-byte; the bare externalID alone would desync that path.
+	record.RecordID = firstNonEmpty(external.RecordID, externalID, sessionID)
 	record.Origin = "orchestrator"
 	record.Grouping = "orchestrator:" + repoDisplayName(repoLabel)
 	record.WorkingDir = firstNonEmpty(workingDir, record.WorkingDir)
