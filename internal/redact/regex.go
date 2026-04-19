@@ -33,6 +33,12 @@ type Findings struct {
 	// secret. Unexported so it never ends up in JSON output and never
 	// survives a marshal/unmarshal round-trip.
 	seenTokens map[string]struct{}
+	// seenVerified is the analogue of seenTokens for verified-secret
+	// dedup — kept on Findings (rather than local to trufflehog.Scan)
+	// so the dedup persists across multiple ScanText calls sharing one
+	// Findings, matching the semantics callers already get from
+	// seenTokens/markToken.
+	seenVerified map[string]struct{}
 }
 
 // markToken returns true the first time a raw token value is recorded.
@@ -48,6 +54,23 @@ func (f *Findings) markToken(raw string) bool {
 		return false
 	}
 	f.seenTokens[raw] = struct{}{}
+	return true
+}
+
+// markVerified returns true the first time a verified-secret key
+// (typically RawV2 when available) is recorded. Callers must gate
+// VerifiedSecretCount/VerifiedSecrets updates on the return value.
+func (f *Findings) markVerified(key string) bool {
+	if key == "" {
+		return false
+	}
+	if f.seenVerified == nil {
+		f.seenVerified = make(map[string]struct{})
+	}
+	if _, dup := f.seenVerified[key]; dup {
+		return false
+	}
+	f.seenVerified[key] = struct{}{}
 	return true
 }
 

@@ -134,6 +134,52 @@ func TestScanRecordDedupsTokensAcrossRegexAndTrufflehog(t *testing.T) {
 	}
 }
 
+// TestScanTextDedupsVerifiedSecretsAcrossCalls guards the symmetry
+// with token dedup (Findings.seenTokens): when the same Findings is
+// reused across multiple ScanText calls, verified-secret dedup must
+// persist so the same credential isn't counted twice. Previously
+// seenVerified was local to trufflehogRunner.Scan and reset every
+// call, so reusing Findings across scans silently double-counted.
+func TestScanTextDedupsVerifiedSecretsAcrossCalls(t *testing.T) {
+	t.Parallel()
+
+	const (
+		id     = "ABIAS9L8MS5IPHTZPPUQ"
+		secret = "v2QPKHl7LcdVYsjaR4LgQiZ1zw3MAnMyiondXC63"
+	)
+	det := &multipartDetector{
+		keyword:  "ABIA",
+		verified: true,
+		emit: []multipartResult{
+			{raw: id, rawV2: id + ":" + secret},
+		},
+	}
+	pipeline, err := New(Options{
+		Detectors:     []thdet.Detector{det},
+		VerifySecrets: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	findings := Findings{}
+	input := "cred=" + id + ":" + secret
+	pipeline.ScanText(input, &findings)
+	pipeline.ScanText(input, &findings)
+
+	if findings.TokenCount != 1 {
+		t.Fatalf("expected TokenCount=1 across two ScanText calls (seenTokens persists), got %d", findings.TokenCount)
+	}
+	if findings.VerifiedSecretCount != 1 {
+		t.Fatalf("expected VerifiedSecretCount=1 across two ScanText calls (seenVerified must persist), got %d (%v)",
+			findings.VerifiedSecretCount, findings.VerifiedSecrets)
+	}
+	if len(findings.VerifiedSecrets) != 1 {
+		t.Fatalf("expected 1 VerifiedSecrets entry, got %d (%v)",
+			len(findings.VerifiedSecrets), findings.VerifiedSecrets)
+	}
+}
+
 // TestApplyRecordSurfacesVerifiedSecrets verifies that ApplyRecord
 // propagates verified-secret metadata from trufflehog detectors, so the
 // extract CLI path can surface verified counts without a second scan.

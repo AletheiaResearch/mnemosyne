@@ -162,7 +162,6 @@ func (r *trufflehogRunner) Scan(input string, findings *Findings) {
 	ctx, cancel := r.context()
 	defer cancel()
 
-	seenVerified := make(map[string]struct{})
 	for _, m := range matches {
 		for _, chunk := range m.Matches() {
 			results, err := m.FromData(ctx, r.verify, chunk)
@@ -196,15 +195,16 @@ func (r *trufflehogRunner) Scan(input string, findings *Findings) {
 				// Verified-secret dedup prefers RawV2 so two distinct
 				// multipart credentials that share an identifier half
 				// aren't collapsed into one verified entry (the symmetric
-				// treatment Redact applies).
+				// treatment Redact applies). Keyed on Findings so dedup
+				// persists across multiple ScanText calls sharing one
+				// Findings — same semantics as markToken.
 				verifiedKey := rawV2
 				if verifiedKey == "" {
 					verifiedKey = raw
 				}
-				if _, dup := seenVerified[verifiedKey]; dup {
+				if !findings.markVerified(verifiedKey) {
 					continue
 				}
-				seenVerified[verifiedKey] = struct{}{}
 				findings.VerifiedSecretCount++
 				if len(findings.VerifiedSecrets) < 20 {
 					findings.VerifiedSecrets = append(findings.VerifiedSecrets, findingLabel(result))
