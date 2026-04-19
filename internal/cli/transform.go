@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -78,6 +79,12 @@ func newTransformCommand(rt *runtime) *cobra.Command {
 				return err
 			}
 			defer in.Close()
+
+			if dir := filepath.Dir(output); dir != "" && dir != "." {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					return err
+				}
+			}
 
 			out, err := os.Create(output)
 			if err != nil {
@@ -170,7 +177,7 @@ func inferToolsAndOrigins(path string) ([]serialize.ToolSchema, []string, error)
 	go func() {
 		defer pw.Close()
 		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, 0, 64*1024), serialize.MaxJSONLineBytes)
+		scanner.Buffer(make([]byte, 0, 64*1024), schema.MaxJSONLineBytes)
 		for scanner.Scan() {
 			line := scanner.Bytes()
 			if _, err := pw.Write(append(append([]byte{}, line...), '\n')); err != nil {
@@ -274,7 +281,7 @@ func resolveTransformSerializer(cmd *cobra.Command, defaults config.ChatTemplate
 
 func transformRecords(in io.Reader, out io.Writer, serializer serialize.Serializer) error {
 	scanner := bufio.NewScanner(in)
-	scanner.Buffer(make([]byte, 0, 64*1024), serialize.MaxJSONLineBytes)
+	scanner.Buffer(make([]byte, 0, 64*1024), schema.MaxJSONLineBytes)
 	writer := bufio.NewWriter(out)
 
 	for scanner.Scan() {

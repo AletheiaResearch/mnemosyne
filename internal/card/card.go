@@ -41,7 +41,7 @@ func SummarizeFile(path string) (Summary, error) {
 		PerGrouping: make(map[string]Breakdown),
 	}
 	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), schema.MaxJSONLineBytes)
 	for scanner.Scan() {
 		raw := scanner.Bytes()
 		if len(strings.TrimSpace(string(raw))) == 0 {

@@ -22,8 +22,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const maxJSONLineBytes = 64 * 1024 * 1024
-
 func HomeDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -57,7 +55,7 @@ func ReadJSONLines(path string, fn func(line int, raw []byte) error) error {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxJSONLineBytes)
+	scanner.Buffer(make([]byte, 0, 64*1024), schema.MaxJSONLineBytes)
 	line := 0
 	for scanner.Scan() {
 		line++
@@ -71,7 +69,7 @@ func ReadJSONLines(path string, fn func(line int, raw []byte) error) error {
 	}
 	if err := scanner.Err(); err != nil {
 		if errors.Is(err, bufio.ErrTooLong) {
-			return fmt.Errorf("%s: jsonl line exceeds %d bytes: %w", path, maxJSONLineBytes, err)
+			return fmt.Errorf("%s: jsonl line exceeds %d bytes: %w", path, schema.MaxJSONLineBytes, err)
 		}
 		return err
 	}

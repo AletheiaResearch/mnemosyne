@@ -18,13 +18,60 @@ type replacementPattern struct {
 }
 
 type Findings struct {
-	EmailCount    int       `json:"email_count"`
-	PublicIPCount int       `json:"public_ip_count"`
-	TokenCount    int       `json:"token_count"`
-	Emails        []string  `json:"emails,omitempty"`
-	PublicIPs     []string  `json:"public_ips,omitempty"`
-	Tokens        []string  `json:"tokens,omitempty"`
-	HighEntropy   []Finding `json:"high_entropy,omitempty"`
+	EmailCount          int       `json:"email_count"`
+	PublicIPCount       int       `json:"public_ip_count"`
+	TokenCount          int       `json:"token_count"`
+	VerifiedSecretCount int       `json:"verified_secret_count,omitempty"`
+	Emails              []string  `json:"emails,omitempty"`
+	PublicIPs           []string  `json:"public_ips,omitempty"`
+	Tokens              []string  `json:"tokens,omitempty"`
+	VerifiedSecrets     []string  `json:"verified_secrets,omitempty"`
+	HighEntropy         []Finding `json:"high_entropy,omitempty"`
+
+	// seenTokens tracks raw token values already counted, so regex and
+	// trufflehog passes sharing one Findings don't double-count the same
+	// secret. Unexported so it never ends up in JSON output and never
+	// survives a marshal/unmarshal round-trip.
+	seenTokens map[string]struct{}
+	// seenVerified is the analogue of seenTokens for verified-secret
+	// dedup — kept on Findings (rather than local to trufflehog.Scan)
+	// so the dedup persists across multiple ScanText calls sharing one
+	// Findings, matching the semantics callers already get from
+	// seenTokens/markToken.
+	seenVerified map[string]struct{}
+}
+
+// markToken returns true the first time a raw token value is recorded.
+// Callers must gate TokenCount/Tokens updates on the return value.
+func (f *Findings) markToken(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	if f.seenTokens == nil {
+		f.seenTokens = make(map[string]struct{})
+	}
+	if _, dup := f.seenTokens[raw]; dup {
+		return false
+	}
+	f.seenTokens[raw] = struct{}{}
+	return true
+}
+
+// markVerified returns true the first time a verified-secret key
+// (typically RawV2 when available) is recorded. Callers must gate
+// VerifiedSecretCount/VerifiedSecrets updates on the return value.
+func (f *Findings) markVerified(key string) bool {
+	if key == "" {
+		return false
+	}
+	if f.seenVerified == nil {
+		f.seenVerified = make(map[string]struct{})
+	}
+	if _, dup := f.seenVerified[key]; dup {
+		return false
+	}
+	f.seenVerified[key] = struct{}{}
+	return true
 }
 
 type Finding struct {
@@ -70,6 +117,14 @@ func (d *Detector) Redact(input string) (string, int) {
 
 func (d *Detector) Scan(input string) Findings {
 	findings := Findings{}
+	d.ScanInto(input, &findings)
+	return findings
+}
+
+// ScanInto merges hits from input into findings. Reusing the same
+// *Findings across multiple scanners (e.g. regex + trufflehog) dedups
+// token-like matches by their raw value via Findings.markToken.
+func (d *Detector) ScanInto(input string, findings *Findings) {
 	for _, pattern := range d.patterns {
 		matches := pattern.regex.FindAllStringSubmatch(input, -1)
 		for _, match := range matches {
@@ -89,6 +144,9 @@ func (d *Detector) Scan(input string) Findings {
 					findings.PublicIPs = append(findings.PublicIPs, value)
 				}
 			default:
+				if !findings.markToken(value) {
+					continue
+				}
 				findings.TokenCount++
 				if len(findings.Tokens) < 20 {
 					findings.Tokens = append(findings.Tokens, value)
@@ -96,12 +154,12 @@ func (d *Detector) Scan(input string) Findings {
 			}
 		}
 	}
-	findings.HighEntropy = ScanEntropy(input, 15)
-	return findings
+	findings.HighEntropy = append(findings.HighEntropy, ScanEntropy(input, 15)...)
 }
 
 func (f Findings) Empty() bool {
-	return f.EmailCount == 0 && f.PublicIPCount == 0 && f.TokenCount == 0 && len(f.HighEntropy) == 0
+	return f.EmailCount == 0 && f.PublicIPCount == 0 && f.TokenCount == 0 &&
+		f.VerifiedSecretCount == 0 && len(f.HighEntropy) == 0
 }
 
 func replacePattern(input string, pattern replacementPattern) (string, int) {

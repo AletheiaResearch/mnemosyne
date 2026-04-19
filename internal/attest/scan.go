@@ -8,6 +8,7 @@ import (
 
 	"github.com/AletheiaResearch/mnemosyne/internal/card"
 	"github.com/AletheiaResearch/mnemosyne/internal/redact"
+	"github.com/AletheiaResearch/mnemosyne/internal/schema"
 )
 
 type NameScan struct {
@@ -37,12 +38,19 @@ func ScanFile(path string, fullName string, skipName bool) (Report, error) {
 	}
 	defer file.Close()
 
-	detector := redact.NewDetector()
+	// Build the full redaction pipeline so the safety scan sees
+	// provider-prefixed secrets (phx_/phc_/phs_, AWS keys, etc.) the
+	// regex detector alone would miss. VerifySecrets stays off — this is
+	// a local-only safety check and must not touch the network.
+	pipeline, err := redact.New(redact.Options{})
+	if err != nil {
+		return Report{}, err
+	}
 	findings := redact.Findings{}
 	nameScan := NameScan{Skipped: skipName, FullName: fullName}
 
 	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 64*1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), schema.MaxJSONLineBytes)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !skipName && fullName != "" && strings.Contains(strings.ToLower(line), strings.ToLower(fullName)) {
@@ -52,7 +60,8 @@ func ScanFile(path string, fullName string, skipName bool) (Report, error) {
 			}
 		}
 
-		lineFindings := detector.Scan(line)
+		lineFindings := redact.Findings{}
+		pipeline.ScanText(line, &lineFindings)
 		findings.EmailCount += lineFindings.EmailCount
 		findings.PublicIPCount += lineFindings.PublicIPCount
 		findings.TokenCount += lineFindings.TokenCount
