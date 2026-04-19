@@ -19,15 +19,25 @@ func (r claudeCodeRedactor) Redact(ctx context.Context, srcPath, dstPath string,
 	if err != nil {
 		return result, err
 	}
-	// Claude Code session files are named <UUID>.jsonl; the filename is the
-	// session's stable logical id (source.go derives record_id the same way).
-	// No in-band hook is needed — the filename survives moves between
-	// project directories, which is exactly the identity we want.
+	// Claude Code session files live at ~/.claude/projects/<project>/<UUID>.jsonl.
+	// The raw source derives the record_id as "<project>/<UUID>" (see
+	// claudecode.sessionRecordID) — mirror that scoping so manifest dedup
+	// keyed on (SessionID, Format) matches the raw source's identity and
+	// doesn't collide across projects that share a session basename.
 	if result.SessionID == "" {
-		base := filepath.Base(srcPath)
-		result.SessionID = strings.TrimSuffix(base, filepath.Ext(base))
+		result.SessionID = claudecodeSessionID(srcPath)
 	}
 	return result, nil
+}
+
+func claudecodeSessionID(srcPath string) string {
+	base := filepath.Base(srcPath)
+	session := strings.TrimSuffix(base, filepath.Ext(base))
+	projectID := filepath.Base(filepath.Dir(srcPath))
+	if projectID == "" || projectID == "." || projectID == string(filepath.Separator) {
+		return session
+	}
+	return projectID + "/" + session
 }
 
 // claudeCodePreProcess strips inline images from Claude Code message content

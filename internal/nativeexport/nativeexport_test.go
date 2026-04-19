@@ -312,13 +312,17 @@ func TestRedact_HomePathAnonymized(t *testing.T) {
 	}
 }
 
-// The Claude Code session id is the filename (sans .jsonl extension).
-// Source parsers derive record_id the same way, and the filename is the
-// one piece of identity that survives project-directory moves.
-func TestRedactClaudecode_SessionIDFromFilename(t *testing.T) {
+// The Claude Code session id is "<projectDir>/<UUID>" — the same scoping
+// the raw source uses for record_id (see claudecode.sessionRecordID). This
+// ensures DiffManifestSessions won't collapse sessions from different
+// projects that happen to share a UUID filename.
+func TestRedactClaudecode_SessionIDIsProjectScoped(t *testing.T) {
 	t.Parallel()
-	srcDir := t.TempDir()
-	src := filepath.Join(srcDir, "11111111-2222-3333-4444-555555555555.jsonl")
+	projectDir := filepath.Join(t.TempDir(), "project-alpha")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	src := filepath.Join(projectDir, "11111111-2222-3333-4444-555555555555.jsonl")
 	fixture, err := os.ReadFile(filepath.Join("testdata", "claudecode-session.jsonl"))
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
@@ -332,8 +336,43 @@ func TestRedactClaudecode_SessionIDFromFilename(t *testing.T) {
 	if err != nil {
 		t.Fatalf("redact: %v", err)
 	}
-	if result.SessionID != "11111111-2222-3333-4444-555555555555" {
-		t.Errorf("SessionID = %q, want filename-derived uuid", result.SessionID)
+	if want := "project-alpha/11111111-2222-3333-4444-555555555555"; result.SessionID != want {
+		t.Errorf("SessionID = %q, want project-scoped %q", result.SessionID, want)
+	}
+}
+
+// Two sessions with identical UUID filenames in different project dirs must
+// produce distinct SessionIDs so manifest dedup does not collapse them.
+func TestRedactClaudecode_SessionIDDisambiguatesAcrossProjects(t *testing.T) {
+	t.Parallel()
+	fixture, err := os.ReadFile(filepath.Join("testdata", "claudecode-session.jsonl"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	redactProject := func(project string) string {
+		t.Helper()
+		dir := filepath.Join(t.TempDir(), project)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		src := filepath.Join(dir, "11111111-2222-3333-4444-555555555555.jsonl")
+		if err := os.WriteFile(src, fixture, 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		result, err := ClaudeCode().Redact(context.Background(), src,
+			filepath.Join(t.TempDir(), "out.jsonl"),
+			Options{Pipeline: newPipeline(t), AttachImages: true})
+		if err != nil {
+			t.Fatalf("redact: %v", err)
+		}
+		return result.SessionID
+	}
+
+	alpha := redactProject("project-alpha")
+	beta := redactProject("project-beta")
+	if alpha == beta {
+		t.Fatalf("SessionIDs collided: alpha=%q beta=%q", alpha, beta)
 	}
 }
 
