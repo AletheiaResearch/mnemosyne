@@ -181,13 +181,19 @@ func boolYesNo(value bool) string {
 }
 
 // describeAttachImages renders the dataset-wide image-attachment state
-// from the observed per-session redaction keys. Falls back to the
-// header's per-publish claim only when no entry has a recognisable key
-// (e.g. a freshly-seeded dataset with empty keys).
+// from the observed per-session redaction keys. Unknown-suffix entries
+// are indeterminate — they coexist with keep or strip sessions as a
+// genuine mix rather than getting silently absorbed into the majority.
+// Falls back to the header's per-publish claim only when no entry has
+// a recognisable key (e.g. a freshly-seeded dataset with empty keys).
 func describeAttachImages(summary RedactionKeySummary, publishAttach bool) string {
 	switch {
 	case summary.Mixed():
 		return "mixed (" + itoa(summary.Keep) + " keep / " + itoa(summary.Strip) + " strip)"
+	case summary.Keep > 0 && summary.Unknown > 0:
+		return "mixed (" + itoa(summary.Keep) + " keep / " + itoa(summary.Unknown) + " unknown)"
+	case summary.Strip > 0 && summary.Unknown > 0:
+		return "mixed (" + itoa(summary.Strip) + " strip / " + itoa(summary.Unknown) + " unknown)"
 	case summary.AllKeep():
 		return "yes"
 	case summary.AllStrip():

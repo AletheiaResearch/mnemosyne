@@ -95,6 +95,47 @@ func TestRenderIsolateDescription_LayoutMatchesExtractPaths(t *testing.T) {
 	}
 }
 
+// A merged manifest may contain legacy or unparseable redaction keys
+// alongside fresh ones. In that case the dataset's image policy is
+// genuinely indeterminate — some sessions keep images, some we can't
+// tell. The README must not collapse that into a clean "yes": the
+// reader needs to see the uncertainty so they don't misrepresent the
+// dataset's posture.
+func TestRenderIsolateDescription_KeepMixedWithUnknownFlagsMix(t *testing.T) {
+	t.Parallel()
+	header := ManifestHeader{AttachImages: true}
+	entries := []ManifestEntry{
+		{File: "claudecode/a.jsonl", RedactionKey: "v1:v1:sha256:cfg:keep-images"},
+		{File: "claudecode/legacy-a.jsonl", RedactionKey: ""},
+		{File: "claudecode/legacy-b.jsonl", RedactionKey: "not-parseable"},
+	}
+	out := RenderIsolateDescription(header, entries, "")
+	if strings.Contains(out, "Attach images: yes\n") {
+		t.Errorf("README must not claim dataset-wide yes when unknown keys are present; got:\n%s", out)
+	}
+	if !strings.Contains(out, "Attach images: mixed (1 keep / 2 unknown)") {
+		t.Errorf("README should flag keep+unknown mix; got:\n%s", out)
+	}
+}
+
+// Symmetric to the keep+unknown case: a strip session alongside
+// unparseable keys is indeterminate, not definitively "no".
+func TestRenderIsolateDescription_StripMixedWithUnknownFlagsMix(t *testing.T) {
+	t.Parallel()
+	header := ManifestHeader{AttachImages: false}
+	entries := []ManifestEntry{
+		{File: "codex/a.jsonl", RedactionKey: "v1:v1:sha256:cfg:strip-images"},
+		{File: "codex/legacy.jsonl", RedactionKey: ""},
+	}
+	out := RenderIsolateDescription(header, entries, "")
+	if strings.Contains(out, "Attach images: no\n") {
+		t.Errorf("README must not claim dataset-wide no when unknown keys are present; got:\n%s", out)
+	}
+	if !strings.Contains(out, "Attach images: mixed (1 strip / 1 unknown)") {
+		t.Errorf("README should flag strip+unknown mix; got:\n%s", out)
+	}
+}
+
 // When every retained entry is strip-images the dataset-wide claim must
 // say "no", even if this publish alone kept images (the publisher did
 // not upload any new sessions, so the dataset is entirely pre-existing).
