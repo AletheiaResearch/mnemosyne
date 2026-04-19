@@ -179,18 +179,19 @@ func TestMergeStringSliceDedupesAndSorts(t *testing.T) {
 func TestMaskSecretLengthBuckets(t *testing.T) {
 	t.Parallel()
 
+	// MaskSecret buckets:
+	//   len < 4        → "[redacted]"
+	//   4 <= len <= 8  → 1 + (len-2) stars + 1
+	//   len > 8        → 4 + (len-8) stars + 4
 	cases := map[string]string{
-		"":        "[redacted]",
-		"abc":     "[redacted]",
-		"abcd":    "a**d",
-		"abcdef":  "a****f",
-		"abcdefgh": "a******h",
-		"abcdefghi":         "abcd*efghi"[:len("abcdefghi")], // placeholder, replaced below
+		"":               "[redacted]",
+		"abc":            "[redacted]",
+		"abcd":           "a**d",
+		"abcdef":         "a****f",
+		"abcdefgh":       "a******h",
+		"abcdefghi":      "abcd*fghi",
+		"abcdefghij0123": "abcd******0123",
 	}
-	// recompute the 9-char and longer cases explicitly to avoid copy/paste math mistakes.
-	cases["abcdefghi"] = "abcd" + strings.Repeat("*", 1) + "fghi"
-	cases["abcdefghij0123"] = "abcd" + strings.Repeat("*", len("abcdefghij0123")-8) + "0123"
-
 	for input, want := range cases {
 		if got := MaskSecret(input); got != want {
 			t.Fatalf("MaskSecret(%q) = %q, want %q", input, got, want)

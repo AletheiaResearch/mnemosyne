@@ -58,8 +58,8 @@ func TestScanEntropyRespectsLimitAndContextWindow(t *testing.T) {
 		if finding.Value == "" {
 			t.Fatalf("empty value in finding %+v", finding)
 		}
-		if finding.Context == "" || !strings.Contains(input, finding.Value) {
-			t.Fatalf("context does not refer to original input: %+v", finding)
+		if finding.Context == "" || !strings.Contains(finding.Context, finding.Value) {
+			t.Fatalf("context does not embed the finding value: %+v", finding)
 		}
 	}
 }
