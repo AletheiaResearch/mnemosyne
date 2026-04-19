@@ -29,7 +29,8 @@ archives:
       - schemas/**
 
 homebrew_casks:
-  - repository:
+  - name: mnemosyne
+    repository:
       owner: AletheiaResearch
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
@@ -44,6 +45,16 @@ homebrew_casks:
           FileUtils.ln_sf "#{HOMEBREW_PREFIX}/bin/mnemosyne", "#{HOMEBREW_PREFIX}/bin/mem"
         uninstall: |
           FileUtils.rm_f "#{HOMEBREW_PREFIX}/bin/mem"
+  - name: "mnemosyne@{{ .Version }}"
+    repository:
+      owner: AletheiaResearch
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: https://github.com/AletheiaResearch/mnemosyne
+    description: Export coding-assistant histories to unified, anonymized archives.
+    binaries:
+      - mnemosyne
 
 snapshot:
   version_template: "{{ .Version }}-next"
