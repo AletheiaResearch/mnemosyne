@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/AletheiaResearch/mnemosyne/internal/redact"
+	"github.com/AletheiaResearch/mnemosyne/internal/source/claudecode"
 )
 
 const plantedImageB64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO6dD4oAAAAASUVORK5CYII="
@@ -312,13 +313,15 @@ func TestRedact_HomePathAnonymized(t *testing.T) {
 	}
 }
 
-// The Claude Code session id is "<projectDir>/<UUID>" — the same scoping
-// the raw source uses for record_id (see claudecode.sessionRecordID). This
-// ensures DiffManifestSessions won't collapse sessions from different
-// projects that happen to share a UUID filename.
+// The Claude Code session id is "<ProjectScope>/<UUID>" — a hash of the
+// project directory, not the directory name itself, so the manifest
+// never leaks path-derived project folders like "-Users-nejc-client".
+// This matches what claudecode.sessionRecordID emits for the canonical
+// record so DiffManifestSessions's (SessionID, Format) key lines up.
 func TestRedactClaudecode_SessionIDIsProjectScoped(t *testing.T) {
 	t.Parallel()
-	projectDir := filepath.Join(t.TempDir(), "project-alpha")
+	const rawProjectDir = "-Users-nejc-client-repo"
+	projectDir := filepath.Join(t.TempDir(), rawProjectDir)
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
 		t.Fatalf("mkdir project: %v", err)
 	}
@@ -336,8 +339,12 @@ func TestRedactClaudecode_SessionIDIsProjectScoped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("redact: %v", err)
 	}
-	if want := "project-alpha/11111111-2222-3333-4444-555555555555"; result.SessionID != want {
-		t.Errorf("SessionID = %q, want project-scoped %q", result.SessionID, want)
+	want := claudecode.ProjectScope(rawProjectDir) + "/11111111-2222-3333-4444-555555555555"
+	if result.SessionID != want {
+		t.Errorf("SessionID = %q, want %q", result.SessionID, want)
+	}
+	if strings.Contains(result.SessionID, "nejc") || strings.Contains(result.SessionID, "client") {
+		t.Errorf("raw project dir leaked into SessionID: %q", result.SessionID)
 	}
 }
 

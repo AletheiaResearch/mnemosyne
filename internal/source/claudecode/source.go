@@ -2,6 +2,8 @@ package claudecode
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -170,17 +172,33 @@ func (s *Source) LookupSession(_ context.Context, sessionID string) (schema.Reco
 	return schema.Record{}, false, nil
 }
 
+// ProjectScope returns a stable, non-reversible short token for a Claude
+// Code project directory name. Claude Code derives project directory
+// names from absolute paths (e.g. "-Users-nejc-client-repo"), so emitting
+// the raw name inside RecordID or manifest.mnemosyne session_id would
+// leak local paths and customer identifiers that redact.Pipeline never
+// sees. The sha256 prefix keeps cross-project uniqueness for dedup while
+// making the public identifier opaque.
+func ProjectScope(projectID string) string {
+	if projectID == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(projectID))
+	return hex.EncodeToString(sum[:8])
+}
+
 // sessionRecordID returns a project-scoped identifier so two projects that
 // share a session filename do not collide in the global RecordID dedup. The
-// project component is the directory name under ~/.claude/projects, which is
-// unique by construction; the session component is the filename minus its
-// extension.
+// project component is hashed (see ProjectScope) so the raw directory name
+// never leaves the local machine; the session component is the filename
+// minus its extension.
 func sessionRecordID(projectID, path string) string {
 	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	if projectID == "" {
+	scope := ProjectScope(projectID)
+	if scope == "" {
 		return base
 	}
-	return projectID + "/" + base
+	return scope + "/" + base
 }
 
 func (s *Source) parseSession(projectID, path string) (schema.Record, error) {
@@ -232,8 +250,8 @@ func (s *Source) parseSubagents(projectID, projectDir, sessionID, subagentDir st
 	if source.FileExists(filepath.Join(projectDir, sessionID+".jsonl")) {
 		recordID += ":subagents"
 	}
-	if projectID != "" {
-		recordID = projectID + "/" + recordID
+	if scope := ProjectScope(projectID); scope != "" {
+		recordID = scope + "/" + recordID
 	}
 	record := assembleClaudeRecord(entries, recordID)
 	record.Provenance = &schema.Provenance{

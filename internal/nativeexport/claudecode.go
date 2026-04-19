@@ -4,6 +4,8 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
+
+	"github.com/AletheiaResearch/mnemosyne/internal/source/claudecode"
 )
 
 type claudeCodeRedactor struct{}
@@ -20,10 +22,11 @@ func (r claudeCodeRedactor) Redact(ctx context.Context, srcPath, dstPath string,
 		return result, err
 	}
 	// Claude Code session files live at ~/.claude/projects/<project>/<UUID>.jsonl.
-	// The raw source derives the record_id as "<project>/<UUID>" (see
-	// claudecode.sessionRecordID) — mirror that scoping so manifest dedup
-	// keyed on (SessionID, Format) matches the raw source's identity and
-	// doesn't collide across projects that share a session basename.
+	// The raw source derives the record_id as "<ProjectScope>/<UUID>" — a
+	// hash of the project dir rather than the raw name, because that name
+	// is path-derived and would otherwise leak local paths. Mirror the
+	// same scoping here so manifest dedup keyed on (SessionID, Format)
+	// matches the raw source's identity without leaking the project dir.
 	if result.SessionID == "" {
 		result.SessionID = claudecodeSessionID(srcPath)
 	}
@@ -37,7 +40,11 @@ func claudecodeSessionID(srcPath string) string {
 	if projectID == "" || projectID == "." || projectID == string(filepath.Separator) {
 		return session
 	}
-	return projectID + "/" + session
+	scope := claudecode.ProjectScope(projectID)
+	if scope == "" {
+		return session
+	}
+	return scope + "/" + session
 }
 
 // claudeCodePreProcess strips inline images from Claude Code message content

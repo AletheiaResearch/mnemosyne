@@ -3,6 +3,7 @@ package claudecode
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -130,14 +131,43 @@ func TestParseSession_PopulatesProvenance(t *testing.T) {
 	if record.Provenance.SourcePath != path {
 		t.Fatalf("source_path = %q, want %q", record.Provenance.SourcePath, path)
 	}
-	if record.Provenance.SourceID != "projA/session-abc" {
-		t.Fatalf("source_id = %q, want projA/session-abc", record.Provenance.SourceID)
+	wantScoped := ProjectScope("projA") + "/session-abc"
+	if record.Provenance.SourceID != wantScoped {
+		t.Fatalf("source_id = %q, want %q", record.Provenance.SourceID, wantScoped)
 	}
 	if record.Provenance.SourceOrigin != "claudecode" {
 		t.Fatalf("source_origin = %q, want claudecode", record.Provenance.SourceOrigin)
 	}
-	if record.RecordID != "projA/session-abc" {
-		t.Fatalf("record_id = %q, want projA/session-abc (project-scoped)", record.RecordID)
+	if record.RecordID != wantScoped {
+		t.Fatalf("record_id = %q, want %q (project-scoped)", record.RecordID, wantScoped)
+	}
+	if strings.Contains(record.RecordID, "projA") {
+		t.Fatalf("raw project dir leaked into record_id: %q", record.RecordID)
+	}
+}
+
+// Claude Code project directory names are path-derived (e.g.
+// "-Users-nejc-client-repo"). ProjectScope must produce a stable opaque
+// token so neither canonical JSONL nor manifest.mnemosyne leaks those
+// substrings, while still disambiguating two different projects.
+func TestProjectScope_IsOpaqueAndStable(t *testing.T) {
+	t.Parallel()
+	sensitive := "-Users-nejc-client-repo"
+	scope := ProjectScope(sensitive)
+	if scope == "" {
+		t.Fatal("ProjectScope returned empty for non-empty input")
+	}
+	if strings.Contains(scope, "Users") || strings.Contains(scope, "nejc") || strings.Contains(scope, "client") || strings.Contains(scope, "repo") {
+		t.Fatalf("ProjectScope leaks path components: %q", scope)
+	}
+	if ProjectScope(sensitive) != scope {
+		t.Fatal("ProjectScope is not deterministic")
+	}
+	if ProjectScope("other-project") == scope {
+		t.Fatal("ProjectScope collides across distinct projects")
+	}
+	if ProjectScope("") != "" {
+		t.Fatal("ProjectScope(\"\") should stay empty")
 	}
 }
 
