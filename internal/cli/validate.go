@@ -28,7 +28,7 @@ func newValidateCommand(rt *runtime) *cobra.Command {
 			defer file.Close()
 
 			scanner := bufio.NewScanner(file)
-			scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+			scanner.Buffer(make([]byte, 0, 64*1024), schema.MaxJSONLineBytes)
 			line := 0
 			valid := 0
 			for scanner.Scan() {

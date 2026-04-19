@@ -31,15 +31,17 @@ type breakdown struct {
 }
 
 type extractSummary struct {
-	OutputPath     string               `json:"output_path"`
-	RecordCount    int                  `json:"record_count"`
-	SkippedRecords int                  `json:"skipped_records"`
-	RedactionCount int                  `json:"redaction_count"`
-	PerModel       map[string]breakdown `json:"per_model"`
-	PerGrouping    map[string]breakdown `json:"per_grouping"`
-	InputTokens    int                  `json:"input_tokens"`
-	OutputTokens   int                  `json:"output_tokens"`
-	Warnings       []string             `json:"warnings,omitempty"`
+	OutputPath          string               `json:"output_path"`
+	RecordCount         int                  `json:"record_count"`
+	SkippedRecords      int                  `json:"skipped_records"`
+	RedactionCount      int                  `json:"redaction_count"`
+	VerifiedSecretCount int                  `json:"verified_secret_count,omitempty"`
+	VerifiedSecrets     []string             `json:"verified_secrets,omitempty"`
+	PerModel            map[string]breakdown `json:"per_model"`
+	PerGrouping         map[string]breakdown `json:"per_grouping"`
+	InputTokens         int                  `json:"input_tokens"`
+	OutputTokens        int                  `json:"output_tokens"`
+	Warnings            []string             `json:"warnings,omitempty"`
 }
 
 type sourceSelection struct {
@@ -52,6 +54,7 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 	var scope string
 	var includeAll bool
 	var suppressReasoning bool
+	var verifySecrets bool
 
 	cmd := &cobra.Command{
 		Use:   "extract",
@@ -62,10 +65,7 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 				return err
 			}
 
-			scope = strings.TrimSpace(firstNonEmpty(scope, cfg.OriginScope))
-			if scope == "" && includeAll {
-				scope = "all"
-			}
+			scope = resolveExtractScope(scope, cfg.OriginScope, includeAll)
 			if scope == "" {
 				return errors.New("extract requires --scope or a configured origin scope")
 			}
@@ -101,7 +101,7 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 			}
 			defer file.Close()
 
-			pipeline, err := redact.FromConfig(cfg)
+			pipeline, err := redact.FromConfigWithOptions(cfg, redact.Options{VerifySecrets: verifySecrets})
 			if err != nil {
 				return err
 			}
@@ -116,6 +116,7 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 				Warnings:    make([]string, 0),
 			}
 			seenRecordIDs := make(map[string]struct{})
+			seenVerifiedFingerprints := make(map[string]struct{})
 			seenWarnings := make(map[string]struct{})
 			var warnMu sync.Mutex
 			addWarning := func(message string) {
@@ -133,14 +134,15 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 			}
 
 			if err := runExtraction(cmd.Context(), runExtractionArgs{
-				rt:                rt,
-				selections:        selections,
-				pipeline:          pipeline,
-				suppressReasoning: suppressReasoning,
-				writer:            writer,
-				summary:           &summary,
-				seenRecordIDs:     seenRecordIDs,
-				addWarning:        addWarning,
+				rt:                       rt,
+				selections:               selections,
+				pipeline:                 pipeline,
+				suppressReasoning:        suppressReasoning,
+				writer:                   writer,
+				summary:                  &summary,
+				seenRecordIDs:            seenRecordIDs,
+				seenVerifiedFingerprints: seenVerifiedFingerprints,
+				addWarning:               addWarning,
 			}); err != nil {
 				return err
 			}
@@ -150,15 +152,17 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 			}
 
 			cfg.LastExtract = &config.LastExtract{
-				Timestamp:      time.Now().UTC().Format(time.RFC3339),
-				RecordCount:    summary.RecordCount,
-				SkippedRecords: summary.SkippedRecords,
-				RedactionCount: summary.RedactionCount,
-				InputTokens:    summary.InputTokens,
-				OutputTokens:   summary.OutputTokens,
-				Scope:          scope,
-				OutputPath:     output,
-				Warnings:       summary.Warnings,
+				Timestamp:           time.Now().UTC().Format(time.RFC3339),
+				RecordCount:         summary.RecordCount,
+				SkippedRecords:      summary.SkippedRecords,
+				RedactionCount:      summary.RedactionCount,
+				VerifiedSecretCount: summary.VerifiedSecretCount,
+				VerifiedSecrets:     summary.VerifiedSecrets,
+				InputTokens:         summary.InputTokens,
+				OutputTokens:        summary.OutputTokens,
+				Scope:               scope,
+				OutputPath:          output,
+				Warnings:            summary.Warnings,
 			}
 			cfg.ReviewerStatements = nil
 			cfg.VerificationRecord = nil
@@ -177,6 +181,7 @@ func newExtractCommand(rt *runtime) *cobra.Command {
 	cmd.Flags().StringVar(&scope, "scope", "", "source scope to extract, or 'all' (defaults to 'all' when --include-all is set)")
 	cmd.Flags().BoolVar(&includeAll, "include-all", false, "ignore grouping exclusions and default scope to 'all'")
 	cmd.Flags().BoolVar(&suppressReasoning, "no-reasoning", false, "omit reasoning traces from assistant turns")
+	cmd.Flags().BoolVar(&verifySecrets, "verify-secrets", false, "live-verify matched provider secrets against their issuing API (network access required)")
 	return cmd
 }
 
@@ -260,6 +265,20 @@ func updateBreakdown(rows map[string]breakdown, key string, record schema.Record
 	rows[key] = row
 }
 
+// resolveExtractScope picks the extract scope. An explicit --scope flag
+// wins; otherwise --include-all forces "all" (so a user with a narrow
+// origin_scope can still emit a full export); otherwise the persisted
+// origin_scope is used. Empty result means the caller should error.
+func resolveExtractScope(scopeFlag, originScope string, includeAll bool) string {
+	if trimmed := strings.TrimSpace(scopeFlag); trimmed != "" {
+		return trimmed
+	}
+	if includeAll {
+		return "all"
+	}
+	return strings.TrimSpace(originScope)
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -277,21 +296,23 @@ func sourcePriority(name string) int {
 }
 
 type runExtractionArgs struct {
-	rt                *runtime
-	selections        []sourceSelection
-	pipeline          *redact.Pipeline
-	suppressReasoning bool
-	writer            *bufio.Writer
-	summary           *extractSummary
-	seenRecordIDs     map[string]struct{}
-	addWarning        func(string)
+	rt                       *runtime
+	selections               []sourceSelection
+	pipeline                 *redact.Pipeline
+	suppressReasoning        bool
+	writer                   *bufio.Writer
+	summary                  *extractSummary
+	seenRecordIDs            map[string]struct{}
+	seenVerifiedFingerprints map[string]struct{}
+	addWarning               func(string)
 }
 
 type emitted struct {
-	record     schema.Record
-	data       []byte
-	redactions int
-	invalid    bool
+	record          schema.Record
+	data            []byte
+	redactions      int
+	verifiedSecrets []redact.VerifiedSecret
+	invalid         bool
 }
 
 func runExtraction(parent context.Context, args runExtractionArgs) error {
@@ -353,9 +374,9 @@ func extractBucket(
 							record.Turns[idx].Reasoning = ""
 						}
 					}
-					redacted, count := args.pipeline.ApplyRecord(record)
+					redacted, stats := args.pipeline.ApplyRecord(record)
 
-					rec := emitted{record: redacted, redactions: count}
+					rec := emitted{record: redacted, redactions: stats.Redactions, verifiedSecrets: stats.VerifiedSecrets}
 					if err := schema.ValidateRecord(redacted); err != nil {
 						args.rt.logger.Debug("skip invalid record", "record_id", record.RecordID, "error", err)
 						rec = emitted{invalid: true}
@@ -405,6 +426,16 @@ func extractBucket(
 		}
 		args.summary.RecordCount++
 		args.summary.RedactionCount += rec.redactions
+		for _, vs := range rec.verifiedSecrets {
+			if _, dup := args.seenVerifiedFingerprints[vs.Fingerprint]; dup {
+				continue
+			}
+			args.seenVerifiedFingerprints[vs.Fingerprint] = struct{}{}
+			args.summary.VerifiedSecretCount++
+			if len(args.summary.VerifiedSecrets) < 20 {
+				args.summary.VerifiedSecrets = append(args.summary.VerifiedSecrets, vs.Label)
+			}
+		}
 		args.summary.InputTokens += rec.record.Usage.InputTokens
 		args.summary.OutputTokens += rec.record.Usage.OutputTokens
 		updateBreakdown(args.summary.PerModel, rec.record.Model, rec.record)

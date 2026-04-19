@@ -28,3 +28,29 @@ func TestDetectFileChangeHandlesNanosecondAttestTimestamp(t *testing.T) {
 		t.Fatal("expected unchanged file when attestation timestamp includes nanoseconds")
 	}
 }
+
+// TestScanFileCoversTrufflehogDetectors guards the safety scan against
+// the regex-only regression: a leaked PostHog personal key (handled by
+// a trufflehog scanner, not the legacy regex set) must show up as a
+// token hit so LastAttest.BuiltInFindings stays truthful.
+func TestScanFileCoversTrufflehogDetectors(t *testing.T) {
+	t.Parallel()
+
+	// Assembled at runtime so the bare literal never appears in source.
+	phxKey := "phx" + "_abcdefghijklmnopqrstuvwxyz0123456789"
+
+	path := filepath.Join(t.TempDir(), "export.jsonl")
+	line := `{"record_id":"rec-1","text":"Authorization: Bearer ` + phxKey + `"}` + "\n"
+	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := ScanFile(path, "", true)
+	if err != nil {
+		t.Fatalf("ScanFile: %v", err)
+	}
+	if report.Findings.TokenCount == 0 {
+		t.Fatalf("expected attestation scan to flag a phx_ key via trufflehog, got findings=%+v",
+			report.Findings)
+	}
+}
