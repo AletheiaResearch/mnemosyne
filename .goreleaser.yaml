@@ -39,6 +39,8 @@ homebrew_casks:
     description: Export coding-assistant histories to unified, anonymized archives.
     binaries:
       - mnemosyne
+    dependencies:
+      - formula: hf
     hooks:
       post:
         install: |
