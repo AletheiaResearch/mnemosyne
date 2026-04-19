@@ -342,6 +342,57 @@ func TestExtractIsolate_SkipsDuplicateAcrossActiveAndArchived(t *testing.T) {
 	}
 }
 
+// A redaction failure during isolate staging must abort the extract.
+// Previously the error was swallowed into a warning, leaving
+// LastExtract.IsolateSessions inconsistent with what was actually
+// staged — publish --isolate would then upload a manifest that
+// referenced missing files.
+func TestExtractIsolate_RedactionErrorAbortsExtract(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	projDir := filepath.Join(home, ".claude", "projects", "demo")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projDir, "session.jsonl"), []byte(extractIsolateClaudecode), 0o644); err != nil {
+		t.Fatalf("write session: %v", err)
+	}
+
+	outDir := t.TempDir()
+	outPath := filepath.Join(outDir, "canonical.jsonl")
+	stagingDir := filepath.Join(outDir, "isolate")
+	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
+		t.Fatalf("mkdir staging: %v", err)
+	}
+	// Plant a regular file where the claudecode/ staging subdirectory
+	// would land, so the redactor's MkdirAll on the hashed subpath
+	// fails with ENOTDIR.
+	if err := os.WriteFile(filepath.Join(stagingDir, "claudecode"), []byte("blocker"), 0o644); err != nil {
+		t.Fatalf("plant blocker: %v", err)
+	}
+
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	rt := &runtime{
+		configPath: cfgPath,
+		logger:     newLogger(false),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+	}
+	out, err := runExtract(t, rt,
+		"--scope", "claudecode",
+		"--include-all",
+		"--output", outPath,
+		"--isolate",
+	)
+	if err == nil {
+		t.Fatalf("expected extract to fail with isolate staging error, got success: %s", out)
+	}
+	if !strings.Contains(err.Error(), "isolate redaction failed") {
+		t.Fatalf("error = %v, want %q", err, "isolate redaction failed")
+	}
+}
+
 // findSingleStagingFile returns the staging file under root whose
 // basename matches name. It fails the test if there is not exactly one.
 func findSingleStagingFile(t *testing.T, root, name string) string {

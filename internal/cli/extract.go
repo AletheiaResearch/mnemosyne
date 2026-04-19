@@ -414,8 +414,11 @@ func (a *runExtractionArgs) recordIsolate(ctx context.Context, origin, src strin
 		RedactionKey: a.redactionKey,
 	})
 	if err != nil {
-		a.addWarning(fmt.Sprintf("isolate redaction failed for %s: %v", src, err))
-		return nil
+		// Swallowing this would publish a canonical dataset whose
+		// IsolateSessions list disagrees with what was actually staged;
+		// `publish --isolate` would then upload an inconsistent manifest.
+		// Force the user to rerun extract instead.
+		return fmt.Errorf("isolate redaction failed for %s: %w", src, err)
 	}
 	session := config.IsolateSession{
 		File:         format + "/" + filepath.ToSlash(relPath),
