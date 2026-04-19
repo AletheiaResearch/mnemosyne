@@ -131,8 +131,10 @@ func redactFile(ctx context.Context, srcPath, dstPath, format string, opts Optio
 	scanner.Buffer(make([]byte, 0, 1024*1024), maxLineBytes)
 
 	lines := 0
+	srcLine := 0
 	sessionID := ""
 	for scanner.Scan() {
+		srcLine++
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
@@ -142,7 +144,7 @@ func redactFile(ctx context.Context, srcPath, dstPath, format string, opts Optio
 		}
 		rewritten, foundID, processErr := processLine(raw, opts, pre, detect)
 		if processErr != nil {
-			return Result{}, fmt.Errorf("process line %d: %w", lines+1, processErr)
+			return Result{}, fmt.Errorf("process line %d: %w", srcLine, processErr)
 		}
 		if sessionID == "" && foundID != "" {
 			sessionID = foundID
