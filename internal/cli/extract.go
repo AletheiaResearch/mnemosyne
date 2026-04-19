@@ -453,6 +453,14 @@ type emitted struct {
 	redactions      int
 	verifiedSecrets []redact.VerifiedSecret
 	invalid         bool
+	// isolateOrigin and isolateSrc are captured before ApplyRecord runs so
+	// the consumer can call recordIsolate only for records that survive the
+	// seenRecordIDs dedup below. Firing it in the worker would redact
+	// native files for records the canonical pass later drops as dupes
+	// (e.g. Codex sessions that appear in both sessions/ and
+	// archived_sessions/ with the same session_meta.payload.id).
+	isolateOrigin string
+	isolateSrc    string
 }
 
 func runExtraction(parent context.Context, args runExtractionArgs) error {
@@ -531,7 +539,13 @@ func extractBucket(
 					}
 					redacted, stats := args.pipeline.ApplyRecord(record)
 
-					rec := emitted{record: redacted, redactions: stats.Redactions, verifiedSecrets: stats.VerifiedSecrets}
+					rec := emitted{
+						record:          redacted,
+						redactions:      stats.Redactions,
+						verifiedSecrets: stats.VerifiedSecrets,
+						isolateOrigin:   isolateOrigin,
+						isolateSrc:      isolateSrc,
+					}
 					if err := schema.ValidateRecord(redacted); err != nil {
 						args.rt.logger.Debug("skip invalid record", "record_id", record.RecordID, "error", err)
 						rec = emitted{invalid: true}
@@ -541,9 +555,6 @@ func extractBucket(
 							return err
 						}
 						rec.data = data
-						if err := args.recordIsolate(ctx, isolateOrigin, isolateSrc); err != nil {
-							return err
-						}
 					}
 
 					select {
@@ -575,6 +586,13 @@ func extractBucket(
 			continue
 		}
 		args.seenRecordIDs[rec.record.RecordID] = struct{}{}
+		if err := args.recordIsolate(parent, rec.isolateOrigin, rec.isolateSrc); err != nil {
+			if *writeErr == nil {
+				*writeErr = err
+			}
+			cancel()
+			continue
+		}
 		if _, err := args.writer.Write(append(rec.data, '\n')); err != nil {
 			if *writeErr == nil {
 				*writeErr = err

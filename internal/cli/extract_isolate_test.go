@@ -270,6 +270,78 @@ func TestExtractIsolate_DisambiguatesSameBasenameAcrossProjects(t *testing.T) {
 	}
 }
 
+// A Codex session can end up in both ~/.codex/sessions and
+// ~/.codex/archived_sessions (the viewer rotates old sessions into the
+// archive). Both files carry the same session_meta.payload.id, so they
+// produce the same canonical RecordID and the seenRecordIDs dedup drops
+// the second. Isolate recording must mirror that decision — otherwise
+// the isolate manifest picks up a session the canonical export rejected.
+func TestExtractIsolate_SkipsDuplicateAcrossActiveAndArchived(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	const codexSession = `{"type":"session_meta","timestamp":"2026-04-18T11:00:00Z","payload":{"id":"shared-session","cwd":"/Users/nejc/repo","git":{"branch":"main"}}}
+{"type":"response_item","timestamp":"2026-04-18T11:00:01Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}
+{"type":"response_item","timestamp":"2026-04-18T11:00:02Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}}
+`
+
+	activeDir := filepath.Join(home, ".codex", "sessions", "2026", "04", "18")
+	archiveDir := filepath.Join(home, ".codex", "archived_sessions", "2026", "04", "18")
+	for _, dir := range []string{activeDir, archiveDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "shared-session.jsonl"), []byte(codexSession), 0o644); err != nil {
+			t.Fatalf("write %s: %v", dir, err)
+		}
+	}
+
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	outPath := filepath.Join(t.TempDir(), "canonical.jsonl")
+	rt := &runtime{
+		configPath: cfgPath,
+		logger:     newLogger(false),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+	}
+	if out, err := runExtract(t, rt,
+		"--scope", "codex",
+		"--include-all",
+		"--output", outPath,
+		"--isolate",
+	); err != nil {
+		t.Fatalf("extract: %v\n%s", err, out)
+	}
+
+	canonical, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read canonical: %v", err)
+	}
+	canonicalLines := 0
+	for _, line := range strings.Split(strings.TrimRight(string(canonical), "\n"), "\n") {
+		if line != "" {
+			canonicalLines++
+		}
+	}
+	if canonicalLines != 1 {
+		t.Fatalf("canonical output has %d record lines, want 1 (RecordID dedup)", canonicalLines)
+	}
+
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.LastExtract == nil {
+		t.Fatalf("LastExtract is nil")
+	}
+	if got := len(cfg.LastExtract.IsolateSessions); got != 1 {
+		t.Fatalf("isolate sessions = %d, want 1 (must match canonical dedup)", got)
+	}
+	if cfg.LastExtract.IsolateSessions[0].SessionID != "shared-session" {
+		t.Errorf("session_id = %q, want %q", cfg.LastExtract.IsolateSessions[0].SessionID, "shared-session")
+	}
+}
+
 // findSingleStagingFile returns the staging file under root whose
 // basename matches name. It fails the test if there is not exactly one.
 func findSingleStagingFile(t *testing.T, root, name string) string {
