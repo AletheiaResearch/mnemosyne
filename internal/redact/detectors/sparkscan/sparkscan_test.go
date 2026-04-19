@@ -82,6 +82,14 @@ func TestRegexMatches(t *testing.T) {
 			want:  []string{skLive},
 		},
 		{
+			// Regression: non-overlapping matches must not swallow the
+			// shared delimiter between two distinct adjacent keys, or
+			// the second key leaks through.
+			name:  "adjacent distinct keys both match",
+			input: skLive + "\n" + pkTest,
+			want:  []string{skLive, pkTest},
+		},
+		{
 			name:  "key at start of input matches",
 			input: skLive + " trailing prose",
 			want:  []string{skLive},

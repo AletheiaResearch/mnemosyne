@@ -22,15 +22,16 @@ type Scanner struct {
 	regex *regexp.Regexp
 }
 
-// keyRegex bounds the match with explicit non-word-char alternatives
-// instead of `\b`. The body class here is strictly `[A-Za-z0-9]`, so
-// `\b` would behave identically — but the in-repo convention
-// (documented in detectors/posthog/posthog.go) is to use explicit
-// boundaries, which keeps this scanner robust if the key charset ever
-// grows to include `-` or `_`.
-var keyRegex = regexp.MustCompile(
-	`(?:^|[^A-Za-z0-9_])(ss_(?:pk|sk)_(?:live|test)_[A-Za-z0-9]{22,})(?:$|[^A-Za-z0-9_])`,
-)
+// keyRegex uses zero-width `\b` boundaries. The body class is strictly
+// `[A-Za-z0-9]`, so the first and last chars of any valid key are word
+// chars and `\b` reliably fires on both sides.
+//
+// Consuming the boundary bytes (as detectors/posthog does to survive
+// `-`-terminated bodies) would break adjacent-key detection here:
+// Go `regexp.FindAllSubmatch` returns non-overlapping matches, so two
+// keys separated by a single delimiter (e.g. `keyA\nkeyB`) would share
+// that delimiter and only the first key would be emitted.
+var keyRegex = regexp.MustCompile(`\b(ss_(?:pk|sk)_(?:live|test)_[A-Za-z0-9]{22,})\b`)
 
 // NewScanner returns a regex-only Scanner for Sparkscan API keys.
 func NewScanner() *Scanner {
