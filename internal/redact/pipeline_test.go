@@ -13,6 +13,83 @@ import (
 	"github.com/AletheiaResearch/mnemosyne/internal/schema"
 )
 
+// TestApplyAny_RoutesByKeyHeuristic pins the exported walker — used by
+// internal/nativeexport to redact format-specific JSON without going
+// through a canonical schema.Record — to its routing contract: string
+// leaves under path/url/command-shaped keys get the corresponding
+// redaction mode.
+func TestApplyAny_RoutesByKeyHeuristic(t *testing.T) {
+	t.Parallel()
+	p, err := New(Options{})
+	if err != nil {
+		t.Fatalf("new pipeline: %v", err)
+	}
+
+	// Tokens are assembled at runtime so provider-prefixed literals never
+	// appear in source — GitHub push protection flags them as real leaks
+	// otherwise, and the same rule applies to the PostHog fixtures below.
+	githubToken := fakeKey("ghp"+"_", "abcdef1234567890ABCDEFGHIJ")
+	openaiToken := fakeKey("sk"+"-", "abcdef1234567890")
+	openaiBody := fakeKey("sk"+"-", "abcdefghijklmnopqrstuvwxyz0123")
+
+	input := map[string]any{
+		"cwd":     "/Users/nejc/repo",
+		"url":     "https://api.example.com?token=" + openaiToken,
+		"command": "curl -H 'Authorization: Bearer " + githubToken + "'",
+		"text":    "contact me at alice@contoso.dev",
+		"nested": []any{
+			map[string]any{
+				"path": "/Users/nejc/other",
+				"body": openaiBody,
+			},
+		},
+	}
+
+	out := p.ApplyAny(input, "")
+	outMap, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("ApplyAny returned %T, want map", out)
+	}
+
+	for k := range input {
+		if _, present := outMap[k]; !present {
+			t.Fatalf("output missing key %q", k)
+		}
+	}
+
+	if got := outMap["url"].(string); strings.Contains(got, openaiToken) {
+		t.Fatalf("url not redacted: %q", got)
+	}
+	if got := outMap["command"].(string); strings.Contains(got, githubToken) {
+		t.Fatalf("command not redacted: %q", got)
+	}
+	if got := outMap["text"].(string); strings.Contains(got, "alice@contoso.dev") {
+		t.Fatalf("email not redacted: %q", got)
+	}
+	nested := outMap["nested"].([]any)
+	if got := nested[0].(map[string]any)["body"].(string); strings.Contains(got, openaiBody) {
+		t.Fatalf("nested body not redacted: %q", got)
+	}
+}
+
+func TestApplyAny_PreservesNonStringLeaves(t *testing.T) {
+	t.Parallel()
+	p, err := New(Options{})
+	if err != nil {
+		t.Fatalf("new pipeline: %v", err)
+	}
+	input := map[string]any{
+		"count": float64(42),
+		"ok":    true,
+		"none":  nil,
+	}
+	out := p.ApplyAny(input, "")
+	outMap := out.(map[string]any)
+	if outMap["count"].(float64) != 42 || !outMap["ok"].(bool) || outMap["none"] != nil {
+		t.Fatalf("non-string leaves mutated: %+v", outMap)
+	}
+}
+
 // Fixtures are assembled at runtime so the full provider-prefixed
 // literal never appears in source — GitHub push protection otherwise
 // flags them as leaked PostHog keys.

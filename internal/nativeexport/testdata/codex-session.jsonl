@@ -1,0 +1,7 @@
+{"type":"session_meta","timestamp":"2026-04-18T11:00:00Z","payload":{"id":"sess-1","cwd":"/Users/nejc/repo","git":{"branch":"main"}}}
+{"type":"turn_context","timestamp":"2026-04-18T11:00:01Z","payload":{"cwd":"/Users/nejc/repo","model":"gpt-5"}}
+{"type":"response_item","timestamp":"2026-04-18T11:00:02Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"email me at alice@contoso.dev"},{"type":"input_image","image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO6dD4oAAAAASUVORK5CYII="}]}}
+{"type":"response_item","timestamp":"2026-04-18T11:00:03Z","payload":{"type":"function_call","call_id":"c1","name":"shell","arguments":"{\"cmd\":\"curl -H 'Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz0123AB'\"}"}}
+{"type":"response_item","timestamp":"2026-04-18T11:00:04Z","payload":{"type":"function_call_output","call_id":"c1","output":"ok"}}
+{"type":"response_item","timestamp":"2026-04-18T11:00:05Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"use sk-abcdefghijklmnopqrstuvwxyz0123 for the demo"}]}}
+{"type":"event_msg","timestamp":"2026-04-18T11:00:06Z","payload":{"type":"user_message","message":"please continue","images":["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO6dD4oAAAAASUVORK5CYII="],"local_images":[{"path":"/Users/nejc/snap.png"}]}}

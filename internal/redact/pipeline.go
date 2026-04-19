@@ -258,6 +258,20 @@ func (p *Pipeline) applyBlock(block schema.ContentBlock, stats *ApplyStats) sche
 	return block
 }
 
+// ApplyAny walks any JSON-decoded value (map/slice/string/other) and
+// redacts string leaves based on the enclosing key's heuristic. Exposed
+// for downstream packages (e.g. internal/nativeexport) that redact
+// format-specific JSON without going through a canonical schema.Record.
+func (p *Pipeline) ApplyAny(value any, key string) any {
+	return p.applyAny(value, key, &ApplyStats{})
+}
+
+// ApplyText exposes the text-mode redactor for callers that aren't
+// routing a canonical schema.Record through ApplyRecord.
+func (p *Pipeline) ApplyText(input string) string {
+	return p.applyText(input, &ApplyStats{})
+}
+
 func (p *Pipeline) applyAny(value any, key string, stats *ApplyStats) any {
 	switch typed := value.(type) {
 	case map[string]any:
@@ -273,13 +287,13 @@ func (p *Pipeline) applyAny(value any, key string, stats *ApplyStats) any {
 		}
 		return out
 	case string:
-		if looksLikePathKey(key) {
+		if LooksLikePathKey(key) {
 			return p.applyPath(typed, stats)
 		}
-		if looksLikeURLKey(key) {
+		if LooksLikeURLKey(key) {
 			return p.applyURL(typed, stats)
 		}
-		if looksLikeCommandKey(key) {
+		if LooksLikeCommandKey(key) {
 			return p.applyCommand(typed, stats)
 		}
 		return p.applyText(typed, stats)
@@ -378,7 +392,7 @@ func CloneMap(input map[string]any) map[string]any {
 	return out
 }
 
-func looksLikePathKey(key string) bool {
+func LooksLikePathKey(key string) bool {
 	key = strings.ToLower(key)
 	for _, candidate := range []string{
 		"path", "cwd", "directory", "dir", "file", "filepath", "file_path",
@@ -391,12 +405,12 @@ func looksLikePathKey(key string) bool {
 	return false
 }
 
-func looksLikeURLKey(key string) bool {
+func LooksLikeURLKey(key string) bool {
 	key = strings.ToLower(key)
 	return strings.Contains(key, "url") || strings.Contains(key, "uri")
 }
 
-func looksLikeCommandKey(key string) bool {
+func LooksLikeCommandKey(key string) bool {
 	key = strings.ToLower(key)
 	return key == "command" || key == "cmd" || strings.Contains(key, "command")
 }

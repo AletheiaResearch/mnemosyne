@@ -98,6 +98,48 @@ func TestExtractPrefersExternalSessionContent(t *testing.T) {
 	}
 }
 
+func TestExtractAdoptsScopedExternalRecordID(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newTestDB(t)
+	src := newSource(dbPath, map[string]source.SessionLookup{
+		"codex": mockLookup{
+			record: schema.Record{
+				RecordID: "project-alpha/external-1",
+				Origin:   "claudecode",
+				Turns: []schema.Turn{
+					{Role: "user", Text: "scoped"},
+					{Role: "assistant", Text: "reply"},
+				},
+			},
+			found: true,
+		},
+	})
+
+	var records []schema.Record
+	err := src.Extract(t.Context(), source.Grouping{
+		ID:           "repo-1",
+		DisplayLabel: "orchestrator:demo",
+		Origin:       src.Name(),
+	}, source.ExtractionContext{}, func(record schema.Record) error {
+		records = append(records, record)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected one record, got %d", len(records))
+	}
+	if records[0].RecordID != "project-alpha/external-1" {
+		t.Fatalf("expected scoped external record id to win, got %q", records[0].RecordID)
+	}
+	meta := source.ExtractMap(records[0].Extensions, "orchestrator")
+	if source.ExtractString(meta, "external_session_id") != "external-1" {
+		t.Fatalf("expected bare external_session_id to remain in metadata, got %+v", meta)
+	}
+}
+
 func TestExtractHandlesSchemasWithoutSentAtAndKeepsFirstMessageModel(t *testing.T) {
 	t.Parallel()
 
