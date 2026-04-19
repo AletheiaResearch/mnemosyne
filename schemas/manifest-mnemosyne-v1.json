@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AletheiaResearch/mnemosyne/schemas/manifest-mnemosyne-v1.json",
+  "title": "Mnemosyne Isolate Manifest",
+  "description": "Schema for a single line of `manifest.mnemosyne`. The file is JSONL: the first non-blank line MUST be a header (kind=\"header\"); every subsequent non-blank line MUST be a session entry (kind=\"session\"). Produced by `mnemosyne publish --isolate` and consumed to dedup uploads across publishes.",
+  "oneOf": [
+    { "$ref": "#/$defs/header" },
+    { "$ref": "#/$defs/session" }
+  ],
+  "$defs": {
+    "header": {
+      "type": "object",
+      "description": "First line of manifest.mnemosyne. Describes the run that produced the dataset and totals across all session entries.",
+      "required": ["kind", "version", "session_count", "attach_images"],
+      "properties": {
+        "kind": {
+          "const": "header"
+        },
+        "version": {
+          "type": "string",
+          "description": "Manifest schema version. Bumped when Header/Entry field semantics change in a breaking way.",
+          "enum": ["v1"]
+        },
+        "tool": {
+          "type": "string",
+          "description": "Tool identifier and version, e.g. \"mnemosyne/0.4.2\"."
+        },
+        "exported_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC 3339 timestamp (UTC) for when the manifest was rendered."
+        },
+        "pipeline_fingerprint": {
+          "type": "string",
+          "description": "Fingerprint identifying the redaction pipeline version, e.g. \"v1:<detector-version>\". Describes the pipeline used for THIS publish event, not the entire dataset — retained remote sessions from prior publishes may have been produced under a different pipeline. Per-session truth lives in each session entry's redaction_key.",
+          "minLength": 1
+        },
+        "config_fingerprint": {
+          "type": "string",
+          "description": "SHA-256 fingerprint of the user's redaction config (custom_redactions + custom_handles), formatted as \"sha256:<hex>\". Scoped to THIS publish event; see pipeline_fingerprint's note about retained sessions.",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "session_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of session entries that follow this header."
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total canonical records observed across all sessions during the run that produced this manifest."
+        },
+        "attach_images": {
+          "type": "boolean",
+          "description": "Whether inline image attachments (base64 data URLs) were retained in the session files uploaded during THIS publish event. Retained remote sessions from prior publishes may have used a different policy. The authoritative per-session image mode is encoded in the session entry's redaction_key suffix (\"keep-images\" vs \"strip-images\")."
+        },
+        "attestation": {
+          "$ref": "#/$defs/attestation"
+        }
+      },
+      "additionalProperties": false
+    },
+    "session": {
+      "type": "object",
+      "description": "Entry describing one session file uploaded alongside the manifest.",
+      "required": [
+        "kind",
+        "file",
+        "format",
+        "source_hash",
+        "redaction_key",
+        "redacted_hash"
+      ],
+      "properties": {
+        "kind": {
+          "const": "session"
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to the session file inside the dataset repo, using forward slashes (e.g. \"claudecode/session.jsonl\")."
+        },
+        "format": {
+          "type": "string",
+          "description": "Origin format of the session file. Matches the mnemosyne source origin.",
+          "enum": ["claudecode", "codex"]
+        },
+        "session_id": {
+          "type": "string",
+          "description": "Format-native, stable session identifier. For Codex: session_meta.payload.id. For Claude Code: the session file's basename sans \".jsonl\". Used by publish to reconcile sessions whose bytes grow and whose file paths move between publishes — the content tuple alone can't match a moved-and-grown session, but the session_id still does.",
+          "minLength": 1
+        },
+        "source_hash": {
+          "type": "string",
+          "description": "SHA-256 of the raw source file bytes before redaction, as \"sha256:<hex>\".",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "redaction_key": {
+          "type": "string",
+          "description": "Opaque key identifying the redaction posture applied to this file. Format: \"<manifest-version>:<pipeline-fingerprint>:<config-fingerprint>:<keep|strip>-images\". Republishing with a different key forces re-upload.",
+          "minLength": 1
+        },
+        "redacted_hash": {
+          "type": "string",
+          "description": "SHA-256 of the post-redaction file bytes that are uploaded to the dataset, as \"sha256:<hex>\".",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "lines": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of successfully redacted JSONL lines written to the session file."
+        },
+        "turns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional count of canonical turns represented by the session. May be absent for formats where the mapping isn't 1:1."
+        }
+      },
+      "additionalProperties": false
+    },
+    "attestation": {
+      "type": "object",
+      "description": "Subset of the canonical attestation record surfaced in the manifest so downstream consumers can see the review posture without a separate artefact.",
+      "required": ["full_name_scanned", "full_name_matches"],
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC 3339 timestamp (UTC) of the attest step that gated this publish."
+        },
+        "full_name_scanned": {
+          "type": "boolean",
+          "description": "Whether the reviewer's full name was scanned against the canonical export."
+        },
+        "full_name_matches": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of full-name matches detected during the scan."
+        },
+        "manual_sample_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of randomly sampled records manually reviewed before publication."
+        },
+        "statements_accepted": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of reviewer statements accepted during attest."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

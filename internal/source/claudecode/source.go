@@ -2,6 +2,8 @@ package claudecode
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -108,7 +110,7 @@ func (s *Source) Extract(ctx context.Context, grouping source.Grouping, extractC
 		return err
 	}
 	for _, path := range files {
-		record, err := s.parseSession(path)
+		record, err := s.parseSession(grouping.ID, path)
 		if err != nil {
 			source.ReportWarning(extractCtx, "claudecode skipped %s: %v", path, err)
 			continue
@@ -134,7 +136,7 @@ func (s *Source) Extract(ctx context.Context, grouping source.Grouping, extractC
 		if !source.DirExists(subagentDir) {
 			continue
 		}
-		record, err := s.parseSubagents(projectDir, entry.Name(), subagentDir)
+		record, err := s.parseSubagents(grouping.ID, projectDir, entry.Name(), subagentDir)
 		if err != nil {
 			source.ReportWarning(extractCtx, "claudecode skipped %s: %v", subagentDir, err)
 			continue
@@ -158,18 +160,48 @@ func (s *Source) LookupSession(_ context.Context, sessionID string) (schema.Reco
 		return schema.Record{}, false, err
 	}
 	for _, path := range files {
-		record, err := s.parseSession(path)
+		projectID := filepath.Base(filepath.Dir(path))
+		record, err := s.parseSession(projectID, path)
 		if err != nil {
 			continue
 		}
-		if record.RecordID == sessionID {
+		if record.RecordID == sessionID || record.Provenance != nil && record.Provenance.SourceID != "" && strings.HasSuffix(record.RecordID, "/"+sessionID) {
 			return record, true, nil
 		}
 	}
 	return schema.Record{}, false, nil
 }
 
-func (s *Source) parseSession(path string) (schema.Record, error) {
+// ProjectScope returns a stable, non-reversible short token for a Claude
+// Code project directory name. Claude Code derives project directory
+// names from absolute paths (e.g. "-Users-nejc-client-repo"), so emitting
+// the raw name inside RecordID or manifest.mnemosyne session_id would
+// leak local paths and customer identifiers that redact.Pipeline never
+// sees. The sha256 prefix keeps cross-project uniqueness for dedup while
+// making the public identifier opaque.
+func ProjectScope(projectID string) string {
+	if projectID == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(projectID))
+	return hex.EncodeToString(sum[:8])
+}
+
+// sessionRecordID returns a project-scoped identifier so two projects that
+// share a session filename do not collide in the global RecordID dedup. The
+// project component is hashed (see ProjectScope) so the raw directory name
+// never leaves the local machine; the session component is the filename
+// minus its extension.
+func sessionRecordID(projectID, path string) string {
+	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	scope := ProjectScope(projectID)
+	if scope == "" {
+		return base
+	}
+	return scope + "/" + base
+}
+
+func (s *Source) parseSession(projectID, path string) (schema.Record, error) {
 	entries := make([]map[string]any, 0)
 	err := source.ReadJSONLines(path, func(_ int, raw []byte) error {
 		line, err := source.DecodeJSONObject(raw)
@@ -181,11 +213,17 @@ func (s *Source) parseSession(path string) (schema.Record, error) {
 	if err != nil {
 		return schema.Record{}, err
 	}
-	recordID := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	return assembleClaudeRecord(entries, recordID), nil
+	recordID := sessionRecordID(projectID, path)
+	record := assembleClaudeRecord(entries, recordID)
+	record.Provenance = &schema.Provenance{
+		SourcePath:   path,
+		SourceID:     recordID,
+		SourceOrigin: "claudecode",
+	}
+	return record, nil
 }
 
-func (s *Source) parseSubagents(projectDir, sessionID, subagentDir string) (schema.Record, error) {
+func (s *Source) parseSubagents(projectID, projectDir, sessionID, subagentDir string) (schema.Record, error) {
 	files, err := source.CollectFiles(subagentDir, func(path string, _ os.DirEntry) bool {
 		return filepath.Ext(path) == ".jsonl"
 	})
@@ -212,7 +250,16 @@ func (s *Source) parseSubagents(projectDir, sessionID, subagentDir string) (sche
 	if source.FileExists(filepath.Join(projectDir, sessionID+".jsonl")) {
 		recordID += ":subagents"
 	}
-	return assembleClaudeRecord(entries, recordID), nil
+	if scope := ProjectScope(projectID); scope != "" {
+		recordID = scope + "/" + recordID
+	}
+	record := assembleClaudeRecord(entries, recordID)
+	record.Provenance = &schema.Provenance{
+		SourcePath:   subagentDir,
+		SourceID:     recordID,
+		SourceOrigin: "claudecode-subagents",
+	}
+	return record, nil
 }
 
 func assembleClaudeRecord(entries []map[string]any, recordID string) schema.Record {

@@ -35,6 +35,8 @@ type Config struct {
 	LastAttest             *LastAttest                `json:"last_attest,omitempty"`
 	PublicationAttestation string                     `json:"publication_attestation,omitempty"`
 	ChatTemplate           *ChatTemplate              `json:"chat_template,omitempty"`
+	IsolateExport          bool                       `json:"isolate_export,omitempty"`
+	AttachImages           bool                       `json:"attach_images,omitempty"`
 	Unknown                map[string]json.RawMessage `json:"-"`
 }
 
@@ -58,17 +60,35 @@ func (c Config) ChatTemplateValue() ChatTemplate {
 }
 
 type LastExtract struct {
-	Timestamp           string   `json:"timestamp"`
-	RecordCount         int      `json:"record_count"`
-	SkippedRecords      int      `json:"skipped_records,omitempty"`
-	RedactionCount      int      `json:"redaction_count,omitempty"`
-	VerifiedSecretCount int      `json:"verified_secret_count,omitempty"`
-	VerifiedSecrets     []string `json:"verified_secrets,omitempty"`
-	InputTokens         int      `json:"input_tokens,omitempty"`
-	OutputTokens        int      `json:"output_tokens,omitempty"`
-	Scope               string   `json:"scope"`
-	OutputPath          string   `json:"output_path,omitempty"`
-	Warnings            []string `json:"warnings,omitempty"`
+	Timestamp           string           `json:"timestamp"`
+	RecordCount         int              `json:"record_count"`
+	SkippedRecords      int              `json:"skipped_records,omitempty"`
+	RedactionCount      int              `json:"redaction_count,omitempty"`
+	VerifiedSecretCount int              `json:"verified_secret_count,omitempty"`
+	VerifiedSecrets     []string         `json:"verified_secrets,omitempty"`
+	InputTokens         int              `json:"input_tokens,omitempty"`
+	OutputTokens        int              `json:"output_tokens,omitempty"`
+	Scope               string           `json:"scope"`
+	OutputPath          string           `json:"output_path,omitempty"`
+	Warnings            []string         `json:"warnings,omitempty"`
+	IsolateStagingDir   string           `json:"isolate_staging_dir,omitempty"`
+	IsolateSessions     []IsolateSession `json:"isolate_sessions,omitempty"`
+}
+
+// IsolateSession records the per-session artifacts produced by
+// `extract --isolate`. Consumed by `publish --isolate` to decide which
+// files to upload and to render the manifest.mnemosyne header.
+type IsolateSession struct {
+	File         string `json:"file"`
+	Format       string `json:"format"`
+	SessionID    string `json:"session_id,omitempty"`
+	SourcePath   string `json:"source_path"`
+	StagingPath  string `json:"staging_path"`
+	SourceHash   string `json:"source_hash"`
+	RedactionKey string `json:"redaction_key"`
+	RedactedHash string `json:"redacted_hash"`
+	Lines        int    `json:"lines"`
+	AttachImages bool   `json:"attach_images"`
 }
 
 type ReviewerStatements struct {
@@ -144,7 +164,7 @@ func Load(path string) (Config, error) {
 		case "destination_repo", "origin_scope", "excluded_groupings", "custom_redactions",
 			"custom_handles", "scope_confirmed", "phase_marker", "last_extract",
 			"reviewer_statements", "verification_record", "last_attest",
-			"publication_attestation", "chat_template":
+			"publication_attestation", "chat_template", "isolate_export", "attach_images":
 		default:
 			cfg.Unknown[key] = value
 		}
