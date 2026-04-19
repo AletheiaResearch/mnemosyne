@@ -10,11 +10,6 @@ import (
 	"github.com/AletheiaResearch/mnemosyne/internal/schema"
 )
 
-// MaxJSONLineBytes bounds a single canonical JSONL line. Matches the limit
-// accepted by the extraction pipeline so transform never rejects a line that
-// extract produced.
-const MaxJSONLineBytes = 64 * 1024 * 1024
-
 // InferTools scans a canonical JSONL stream and synthesizes a best-effort
 // list of tool schemas from the tool calls it observes.
 //
@@ -26,7 +21,7 @@ const MaxJSONLineBytes = 64 * 1024 * 1024
 // MergeToolCatalog).
 func InferTools(r io.Reader) ([]ToolSchema, error) {
 	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64*1024), MaxJSONLineBytes)
+	scanner.Buffer(make([]byte, 0, 64*1024), schema.MaxJSONLineBytes)
 
 	type paramStats struct {
 		typeName string

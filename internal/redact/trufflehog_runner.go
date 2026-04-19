@@ -1,0 +1,239 @@
+package redact
+
+import (
+	"context"
+	"strings"
+	"time"
+
+	thdet "github.com/trufflesecurity/trufflehog/v3/pkg/detectors"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/engine/ahocorasick"
+)
+
+// verifyBudget bounds the total time spent verifying a single input
+// across every detector the runner drives. Individual HTTP requests
+// carry their own per-request timeouts via NewDetectorHttpClient.
+const verifyBudget = 15 * time.Second
+
+// trufflehogRunner plugs a set of trufflehog Detector implementations
+// into the redact Pipeline. It mirrors the built-in regex Detector
+// interface: Redact replaces every matched secret with PlaceholderMarker
+// and Scan folds hits into Findings.
+//
+// Detectors are dispatched through an aho-corasick trie built at
+// construction time. For each call only detectors whose keywords appear
+// in the input are invoked, so the ~800 upstream defaults impose minimal
+// per-call cost.
+type trufflehogRunner struct {
+	core   *ahocorasick.Core
+	verify bool
+}
+
+func newTrufflehogRunner(ds []thdet.Detector, verify bool) *trufflehogRunner {
+	if len(ds) == 0 {
+		return &trufflehogRunner{verify: verify}
+	}
+	return &trufflehogRunner{
+		core:   ahocorasick.NewAhoCorasickCore(ds),
+		verify: verify,
+	}
+}
+
+// Redact finds secrets via the configured detectors and replaces each
+// raw match with PlaceholderMarker. When stats is non-nil, verified
+// results (Result.Verified) are recorded there so callers of
+// Pipeline.ApplyRecord can surface them in summaries.
+func (r *trufflehogRunner) Redact(input string, stats *ApplyStats) (string, int) {
+	if r == nil || r.core == nil || input == "" {
+		return input, 0
+	}
+	data := []byte(input)
+	matches := r.core.FindDetectorMatches(data)
+	if len(matches) == 0 {
+		return input, 0
+	}
+
+	ctx, cancel := r.context()
+	defer cancel()
+
+	out := input
+	count := 0
+	seen := make(map[string]struct{})
+	for _, m := range matches {
+		for _, chunk := range m.Matches() {
+			results, err := m.FromData(ctx, r.verify, chunk)
+			if err != nil || len(results) == 0 {
+				continue
+			}
+			for _, result := range results {
+				raw, rawV2 := string(result.Raw), string(result.RawV2)
+				// RawV2 carries the full multipart credential ("id:secret")
+				// when the detector emits one; Raw only holds the identifier
+				// half. Prefer RawV2 for dedup/fingerprints so two AWS keys
+				// that share an access-key ID aren't collapsed into one
+				// verified entry.
+				key := raw
+				if rawV2 != "" {
+					key = rawV2
+				}
+				if key == "" {
+					continue
+				}
+				if result.Verified && stats != nil {
+					stats.recordVerified(key, findingLabel(result))
+				}
+				if _, dup := seen[key]; dup {
+					continue
+				}
+				seen[key] = struct{}{}
+				// Strip the combined form first so the full "id:secret"
+				// substring is redacted when it appears contiguously.
+				combinedHits := 0
+				if rawV2 != "" {
+					replaced, n := stringsReplaceAll(out, rawV2, PlaceholderMarker)
+					combinedHits = n
+					out = replaced
+					count += n
+				}
+				if raw != "" && raw != rawV2 {
+					replaced, n := stringsReplaceAll(out, raw, PlaceholderMarker)
+					out = replaced
+					count += n
+				}
+				// When the combined form wasn't found as one substring, the
+				// secret half of a multipart credential (the non-identifier
+				// portion of RawV2) may still be sitting in the output —
+				// e.g. a .env file with AWS_ACCESS_KEY_ID=... and
+				// AWS_SECRET_ACCESS_KEY=... on separate lines. Stripping
+				// Raw alone redacts the ID but leaves the secret visible,
+				// so split RawV2 on Raw and scrub each remaining segment.
+				switch {
+				case combinedHits == 0 && raw != "" && rawV2 != "" && rawV2 != raw && strings.Contains(rawV2, raw):
+					for _, part := range strings.Split(rawV2, raw) {
+						part = strings.Trim(part, ":;,=|& \t\r\n\"'<>()[]{}")
+						if part == "" {
+							continue
+						}
+						replaced, n := stringsReplaceAll(out, part, PlaceholderMarker)
+						out = replaced
+						count += n
+					}
+				case combinedHits == 0 && rawV2 != "" && rawV2 != raw:
+					// RawV2 is a compound of components that don't
+					// include Raw (e.g. CexIO emits Raw=apiKey,
+					// RawV2=userId+secret). Walk every split point
+					// and redact both halves if each appears
+					// independently in the output. minPart avoids
+					// false positives on short prefixes/suffixes.
+					const minPart = 8
+					for i := minPart; i <= len(rawV2)-minPart; i++ {
+						left, right := rawV2[:i], rawV2[i:]
+						if !strings.Contains(out, left) || !strings.Contains(out, right) {
+							continue
+						}
+						replaced, n := stringsReplaceAll(out, left, PlaceholderMarker)
+						out = replaced
+						count += n
+						replaced, n = stringsReplaceAll(out, right, PlaceholderMarker)
+						out = replaced
+						count += n
+						break
+					}
+				}
+			}
+		}
+	}
+	return out, count
+}
+
+// Scan reports detector hits into findings. Raw values are deduped via
+// Findings.markToken so tokens already counted by a regex pass on the
+// same findings don't get counted again. Keys confirmed by a verifier
+// contribute once to VerifiedSecretCount.
+func (r *trufflehogRunner) Scan(input string, findings *Findings) {
+	if r == nil || r.core == nil || input == "" || findings == nil {
+		return
+	}
+	data := []byte(input)
+	matches := r.core.FindDetectorMatches(data)
+	if len(matches) == 0 {
+		return
+	}
+
+	ctx, cancel := r.context()
+	defer cancel()
+
+	for _, m := range matches {
+		for _, chunk := range m.Matches() {
+			results, err := m.FromData(ctx, r.verify, chunk)
+			if err != nil || len(results) == 0 {
+				continue
+			}
+			for _, result := range results {
+				raw, rawV2 := string(result.Raw), string(result.RawV2)
+				// Token dedup uses Raw so a credential caught by both the
+				// regex pass (which stores the secret half it matched) and
+				// this trufflehog run gets counted once. Keying on RawV2
+				// here would miss the cross-detector overlap and
+				// double-count any multipart secret (e.g. an Algolia
+				// app-id/API-key pair flagged by both passes).
+				tokenKey := raw
+				if tokenKey == "" {
+					tokenKey = rawV2
+				}
+				if tokenKey == "" {
+					continue
+				}
+				if findings.markToken(tokenKey) {
+					findings.TokenCount++
+					if len(findings.Tokens) < 20 {
+						findings.Tokens = append(findings.Tokens, findingLabel(result))
+					}
+				}
+				if !result.Verified {
+					continue
+				}
+				// Verified-secret dedup prefers RawV2 so two distinct
+				// multipart credentials that share an identifier half
+				// aren't collapsed into one verified entry (the symmetric
+				// treatment Redact applies). Keyed on Findings so dedup
+				// persists across multiple ScanText calls sharing one
+				// Findings — same semantics as markToken.
+				verifiedKey := rawV2
+				if verifiedKey == "" {
+					verifiedKey = raw
+				}
+				if !findings.markVerified(verifiedKey) {
+					continue
+				}
+				findings.VerifiedSecretCount++
+				if len(findings.VerifiedSecrets) < 20 {
+					findings.VerifiedSecrets = append(findings.VerifiedSecrets, findingLabel(result))
+				}
+			}
+		}
+	}
+}
+
+func (r *trufflehogRunner) context() (context.Context, context.CancelFunc) {
+	if !r.verify {
+		// Regex-only path never performs network I/O, so the context
+		// is nominal — a cancel-on-return is enough.
+		ctx, cancel := context.WithCancel(context.Background())
+		return ctx, cancel
+	}
+	return context.WithTimeout(context.Background(), verifyBudget)
+}
+
+// findingLabel builds the short "<detector>:<redacted>" tag used in
+// Findings. Falls back to the detector type when a detector does not
+// populate Name, and to just the name when no Redacted hint is present.
+func findingLabel(r thdet.Result) string {
+	name := r.DetectorName
+	if name == "" {
+		name = r.DetectorType.String()
+	}
+	if r.Redacted != "" {
+		return name + ":" + r.Redacted
+	}
+	return name
+}

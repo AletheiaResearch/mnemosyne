@@ -177,8 +177,7 @@ func processLine(raw []byte, opts Options, pre preProcess, detect sessionDetect)
 	if unmarshalErr := json.Unmarshal(raw, &line); unmarshalErr != nil {
 		// Pass-through for non-object lines (rare). Apply a plain text redact
 		// pass so secrets embedded in free-form lines don't leak.
-		redacted, _ := opts.Pipeline.ApplyText(string(raw))
-		return []byte(redacted), "", nil
+		return []byte(opts.Pipeline.ApplyText(string(raw))), "", nil
 	}
 	if detect != nil {
 		sessionID = detect(line)
@@ -187,7 +186,7 @@ func processLine(raw []byte, opts Options, pre preProcess, detect sessionDetect)
 	if !keep {
 		return nil, sessionID, nil
 	}
-	walked, _ := opts.Pipeline.ApplyAny(line, "")
+	walked := opts.Pipeline.ApplyAny(line, "")
 	out, err = json.Marshal(walked)
 	return out, sessionID, err
 }

@@ -1,5 +1,12 @@
 package schema
 
+// MaxJSONLineBytes is the maximum size of a single canonical-JSONL
+// record any reader must accept. Extraction allows records this large,
+// so every downstream step (validate, transform, attest, card
+// summaries) has to agree or otherwise large-but-valid exports become
+// unreadable mid-pipeline.
+const MaxJSONLineBytes = 64 * 1024 * 1024
+
 type Record struct {
 	RecordID   string         `json:"record_id"`
 	Origin     string         `json:"origin"`

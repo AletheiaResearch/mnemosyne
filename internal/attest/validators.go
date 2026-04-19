@@ -12,6 +12,11 @@ const (
 	MinimumManualSampleCount = 15
 )
 
+// DefaultPublishAttestationPlaceholder is the suggested wording surfaced in
+// UI prompts. It must satisfy ValidatePublishAttestation; keeping it here
+// prevents UI copy from drifting past the validator's checks.
+const DefaultPublishAttestationPlaceholder = "I approve publishing this reviewed export."
+
 type ValidationError struct {
 	Checks []string `json:"checks"`
 }

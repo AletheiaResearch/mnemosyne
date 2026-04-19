@@ -60,17 +60,19 @@ func (c Config) ChatTemplateValue() ChatTemplate {
 }
 
 type LastExtract struct {
-	Timestamp         string            `json:"timestamp"`
-	RecordCount       int               `json:"record_count"`
-	SkippedRecords    int               `json:"skipped_records,omitempty"`
-	RedactionCount    int               `json:"redaction_count,omitempty"`
-	InputTokens       int               `json:"input_tokens,omitempty"`
-	OutputTokens      int               `json:"output_tokens,omitempty"`
-	Scope             string            `json:"scope"`
-	OutputPath        string            `json:"output_path,omitempty"`
-	Warnings          []string          `json:"warnings,omitempty"`
-	IsolateStagingDir string            `json:"isolate_staging_dir,omitempty"`
-	IsolateSessions   []IsolateSession  `json:"isolate_sessions,omitempty"`
+	Timestamp           string           `json:"timestamp"`
+	RecordCount         int              `json:"record_count"`
+	SkippedRecords      int              `json:"skipped_records,omitempty"`
+	RedactionCount      int              `json:"redaction_count,omitempty"`
+	VerifiedSecretCount int              `json:"verified_secret_count,omitempty"`
+	VerifiedSecrets     []string         `json:"verified_secrets,omitempty"`
+	InputTokens         int              `json:"input_tokens,omitempty"`
+	OutputTokens        int              `json:"output_tokens,omitempty"`
+	Scope               string           `json:"scope"`
+	OutputPath          string           `json:"output_path,omitempty"`
+	Warnings            []string         `json:"warnings,omitempty"`
+	IsolateStagingDir   string           `json:"isolate_staging_dir,omitempty"`
+	IsolateSessions     []IsolateSession `json:"isolate_sessions,omitempty"`
 }
 
 // IsolateSession records the per-session artifacts produced by
