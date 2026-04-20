@@ -2,6 +2,7 @@ package source
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/md5"
 	"crypto/sha256"
@@ -59,7 +60,7 @@ func ReadJSONLines(path string, fn func(line int, raw []byte) error) error {
 	line := 0
 	for scanner.Scan() {
 		line++
-		raw := bytesTrim(scanner.Bytes())
+		raw := bytes.TrimSpace(scanner.Bytes())
 		if len(raw) == 0 {
 			continue
 		}
@@ -290,10 +291,6 @@ func ExtractSlice(input map[string]any, key string) []any {
 		}
 	}
 	return nil
-}
-
-func bytesTrim(input []byte) []byte {
-	return []byte(strings.TrimSpace(string(input)))
 }
 
 func Optional(err error) error {
