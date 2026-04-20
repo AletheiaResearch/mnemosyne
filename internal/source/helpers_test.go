@@ -286,12 +286,44 @@ func TestCollectFilesGathersMatchesSortedAndSkipsMissingRoots(t *testing.T) {
 	}
 }
 
+func TestFirstNonEmptyReturnsFirstNonBlankValue(t *testing.T) {
+	t.Parallel()
+
+	if got := FirstNonEmpty("", " \t\n", "first", "second"); got != "first" {
+		t.Fatalf("FirstNonEmpty returned %q, want %q", got, "first")
+	}
+	if got := FirstNonEmpty("", " "); got != "" {
+		t.Fatalf("FirstNonEmpty returned %q for all-blank input, want empty", got)
+	}
+}
+
+func TestIntNumberCoercesJSONNumbers(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		in   any
+		want int
+	}{
+		{float64(12), 12},
+		{json.Number("34"), 34},
+		{"56", 0},
+		{nil, 0},
+	}
+	for _, tc := range cases {
+		if got := IntNumber(tc.in); got != tc.want {
+			t.Fatalf("IntNumber(%v) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestAttachmentTypeCategorizesMIME(t *testing.T) {
 	t.Parallel()
 	cases := []struct{ mime, want string }{
 		{"image/png", "image"},
 		{"image/jpeg", "image"},
+		{" Image/PNG; charset=binary", "image"},
 		{"application/pdf", "document"},
+		{"text/plain; charset=utf-8", "document"},
 		{"", "document"},
 	}
 	for _, tc := range cases {

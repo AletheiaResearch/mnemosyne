@@ -246,6 +246,7 @@ func CauseFromContext(ctx context.Context) error {
 	return nil
 }
 
+// FirstNonEmpty returns the first value whose trimmed form is non-empty.
 func FirstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -272,7 +273,8 @@ func IntNumber(value any) int {
 // AttachmentType buckets a MIME type into the small set of attachment
 // categories the schema recognises.
 func AttachmentType(mime string) string {
-	if strings.HasPrefix(mime, "image/") {
+	base := strings.ToLower(strings.TrimSpace(strings.SplitN(mime, ";", 2)[0]))
+	if strings.HasPrefix(base, "image/") {
 		return "image"
 	}
 	return "document"
