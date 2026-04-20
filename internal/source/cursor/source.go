@@ -186,7 +186,7 @@ func (s *Source) extractComposer(db *sql.DB, composerID string, value []byte, gr
 		if err != nil {
 			continue
 		}
-		turnType := intNumber(payload["type"])
+		turnType := source.IntNumber(payload["type"])
 		turn := schema.Turn{
 			Timestamp: source.NormalizeTimestamp(payload["createdAt"]),
 			Text:      source.ExtractString(payload, "text"),
@@ -195,11 +195,11 @@ func (s *Source) extractComposer(db *sql.DB, composerID string, value []byte, gr
 			turn.Reasoning = source.ExtractString(thinking, "text")
 		}
 		if modelInfo := source.ExtractMap(payload, "modelInfo"); modelInfo != nil {
-			record.Model = firstNonEmpty(source.ExtractString(modelInfo, "modelName"), record.Model)
+			record.Model = source.FirstNonEmpty(source.ExtractString(modelInfo, "modelName"), record.Model)
 		}
 		if tokenCount := source.ExtractMap(payload, "tokenCount"); tokenCount != nil {
-			record.Usage.InputTokens += intNumber(tokenCount["inputTokens"])
-			record.Usage.OutputTokens += intNumber(tokenCount["outputTokens"])
+			record.Usage.InputTokens += source.IntNumber(tokenCount["inputTokens"])
+			record.Usage.OutputTokens += source.IntNumber(tokenCount["outputTokens"])
 		}
 		if tool := source.ExtractMap(payload, "toolFormerData"); tool != nil {
 			params := normalizeCursorPayload(tool["params"])
@@ -332,26 +332,5 @@ func defaultPath() string {
 		return filepath.Join(home, "AppData", "Roaming", "Cursor", "User", "globalStorage", "state.vscdb")
 	default:
 		return filepath.Join(home, ".config", "Cursor", "User", "globalStorage", "state.vscdb")
-	}
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func intNumber(value any) int {
-	switch typed := value.(type) {
-	case float64:
-		return int(typed)
-	case json.Number:
-		v, _ := typed.Int64()
-		return int(v)
-	default:
-		return 0
 	}
 }

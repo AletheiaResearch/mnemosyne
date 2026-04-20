@@ -2,6 +2,7 @@ package card
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"os"
 	"sort"
@@ -44,7 +45,7 @@ func SummarizeFile(path string) (Summary, error) {
 	scanner.Buffer(make([]byte, 0, 64*1024), schema.MaxJSONLineBytes)
 	for scanner.Scan() {
 		raw := scanner.Bytes()
-		if len(strings.TrimSpace(string(raw))) == 0 {
+		if len(bytes.TrimSpace(raw)) == 0 {
 			continue
 		}
 		var record schema.Record

@@ -2,6 +2,7 @@ package source
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/md5"
 	"crypto/sha256"
@@ -59,7 +60,7 @@ func ReadJSONLines(path string, fn func(line int, raw []byte) error) error {
 	line := 0
 	for scanner.Scan() {
 		line++
-		raw := bytesTrim(scanner.Bytes())
+		raw := bytes.TrimSpace(scanner.Bytes())
 		if len(raw) == 0 {
 			continue
 		}
@@ -245,6 +246,40 @@ func CauseFromContext(ctx context.Context) error {
 	return nil
 }
 
+// FirstNonEmpty returns the first value whose trimmed form is non-empty.
+func FirstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// IntNumber coerces a JSON-decoded numeric value into an int. Covers both
+// encoding/json's float64 default and json.Number when decoders opt in.
+func IntNumber(value any) int {
+	switch typed := value.(type) {
+	case float64:
+		return int(typed)
+	case json.Number:
+		v, _ := typed.Int64()
+		return int(v)
+	default:
+		return 0
+	}
+}
+
+// AttachmentType buckets a MIME type into the small set of attachment
+// categories the schema recognises.
+func AttachmentType(mime string) string {
+	base := strings.ToLower(strings.TrimSpace(strings.SplitN(mime, ";", 2)[0]))
+	if strings.HasPrefix(base, "image/") {
+		return "image"
+	}
+	return "document"
+}
+
 func ExtractString(input map[string]any, keys ...string) string {
 	for _, key := range keys {
 		if value, ok := input[key]; ok {
@@ -281,10 +316,6 @@ func ExtractSlice(input map[string]any, key string) []any {
 		}
 	}
 	return nil
-}
-
-func bytesTrim(input []byte) []byte {
-	return []byte(strings.TrimSpace(string(input)))
 }
 
 func Optional(err error) error {

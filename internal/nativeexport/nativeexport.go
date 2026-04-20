@@ -11,6 +11,7 @@ package nativeexport
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -21,7 +22,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/AletheiaResearch/mnemosyne/internal/redact"
 )
@@ -139,7 +139,7 @@ func redactFile(ctx context.Context, srcPath, dstPath, format string, opts Optio
 			return Result{}, err
 		}
 		raw := scanner.Bytes()
-		if len(strings.TrimSpace(string(raw))) == 0 {
+		if len(bytes.TrimSpace(raw)) == 0 {
 			continue
 		}
 		rewritten, foundID, processErr := processLine(raw, opts, pre, detect)

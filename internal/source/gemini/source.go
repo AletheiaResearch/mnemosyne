@@ -134,7 +134,7 @@ func (s *Source) parseFile(path string, grouping string) (schema.Record, error) 
 	}
 
 	record := schema.Record{
-		RecordID:  firstNonEmpty(source.ExtractString(payload, "sessionId"), strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))),
+		RecordID:  source.FirstNonEmpty(source.ExtractString(payload, "sessionId"), strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))),
 		Origin:    s.Name(),
 		Grouping:  grouping,
 		StartedAt: source.NormalizeTimestamp(payload["startTime"]),
@@ -171,14 +171,14 @@ func (s *Source) parseFile(path string, grouping string) (schema.Record, error) 
 					case source.ExtractMap(block, "inlineData") != nil:
 						data := source.ExtractMap(block, "inlineData")
 						turn.Attachments = append(turn.Attachments, schema.ContentBlock{
-							Type:      attachmentType(source.ExtractString(data, "mimeType")),
+							Type:      source.AttachmentType(source.ExtractString(data, "mimeType")),
 							MediaType: source.ExtractString(data, "mimeType"),
 							Data:      source.ExtractString(data, "data"),
 						})
 					case source.ExtractMap(block, "fileData") != nil:
 						data := source.ExtractMap(block, "fileData")
 						turn.Attachments = append(turn.Attachments, schema.ContentBlock{
-							Type:      attachmentType(source.ExtractString(data, "mimeType")),
+							Type:      source.AttachmentType(source.ExtractString(data, "mimeType")),
 							MediaType: source.ExtractString(data, "mimeType"),
 							URL:       source.ExtractString(data, "fileUri"),
 						})
@@ -231,13 +231,13 @@ func (s *Source) parseFile(path string, grouping string) (schema.Record, error) 
 				if output := callMap["output"]; output != nil {
 					call.Output = &schema.ToolOutput{Raw: output}
 				}
-				call.Status = firstNonEmpty(source.ExtractString(callMap, "status"), statusFromOutput(call.Output))
+				call.Status = source.FirstNonEmpty(source.ExtractString(callMap, "status"), statusFromOutput(call.Output))
 				turn.ToolCalls = append(turn.ToolCalls, call)
 			}
 			tokens := source.ExtractMap(message, "tokens")
-			record.Usage.InputTokens += intNumber(tokens["input"]) + intNumber(tokens["cached"])
-			record.Usage.OutputTokens += intNumber(tokens["output"])
-			record.Model = firstNonEmpty(source.ExtractString(message, "model"), record.Model)
+			record.Usage.InputTokens += source.IntNumber(tokens["input"]) + source.IntNumber(tokens["cached"])
+			record.Usage.OutputTokens += source.IntNumber(tokens["output"])
+			record.Model = source.FirstNonEmpty(source.ExtractString(message, "model"), record.Model)
 			record.Turns = append(record.Turns, turn)
 		}
 	}
@@ -272,34 +272,6 @@ func compactRecord(record schema.Record) string {
 	record.Grouping = ""
 	data, _ := json.Marshal(record)
 	return string(data)
-}
-
-func attachmentType(mime string) string {
-	if strings.HasPrefix(mime, "image/") {
-		return "image"
-	}
-	return "document"
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func intNumber(value any) int {
-	switch typed := value.(type) {
-	case float64:
-		return int(typed)
-	case json.Number:
-		v, _ := typed.Int64()
-		return int(v)
-	default:
-		return 0
-	}
 }
 
 func statusFromOutput(output *schema.ToolOutput) string {

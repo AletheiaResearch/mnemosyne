@@ -46,7 +46,7 @@ func textField(label, value, placeholder string) formField {
 	ti.SetValue(value)
 	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(common.ColorSubtle)
 	ti.TextStyle = lipgloss.NewStyle().Foreground(common.ColorText)
-	ti.CursorStyle = lipgloss.NewStyle().Foreground(common.ColorBrand)
+	ti.Cursor.Style = lipgloss.NewStyle().Foreground(common.ColorBrand)
 	return formField{
 		label:       label,
 		kind:        fieldText,
@@ -472,7 +472,7 @@ func (s *formScreen) renderFields() string {
 				value = common.MutedStyle.Render("[ ] off")
 			}
 		}
-		label := labelStyle.Copy().Width(keyW).Render(f.label)
+		label := labelStyle.Width(keyW).Render(f.label)
 		lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Top, prefix, label, " ", value))
 		if f.help != "" && i == s.focus {
 			lines = append(lines, common.MutedStyle.Render("    "+f.help))

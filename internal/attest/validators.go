@@ -97,9 +97,10 @@ func ValidatePublishAttestation(input string) error {
 	return nil
 }
 
+var manualSampleCountRE = regexp.MustCompile(`\b(\d+)\b`)
+
 func ParseManualSampleCount(input string) int {
-	re := regexp.MustCompile(`\b(\d+)\b`)
-	match := re.FindStringSubmatch(input)
+	match := manualSampleCountRE.FindStringSubmatch(input)
 	if len(match) < 2 {
 		return 0
 	}

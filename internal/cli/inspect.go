@@ -21,7 +21,7 @@ func newInspectCommand(rt *runtime) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope = strings.TrimSpace(firstNonEmpty(scope, cfg.OriginScope))
+			scope = strings.TrimSpace(source.FirstNonEmpty(scope, cfg.OriginScope))
 			if scope == "" {
 				return errors.New("inspect requires --scope or a configured origin scope")
 			}

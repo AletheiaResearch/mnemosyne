@@ -17,6 +17,7 @@ import (
 	"github.com/AletheiaResearch/mnemosyne/internal/config"
 	"github.com/AletheiaResearch/mnemosyne/internal/publish"
 	"github.com/AletheiaResearch/mnemosyne/internal/redact"
+	"github.com/AletheiaResearch/mnemosyne/internal/source"
 	"github.com/AletheiaResearch/mnemosyne/internal/version"
 )
 
@@ -62,7 +63,7 @@ func newPublishCommand(rt *runtime) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			repoID = firstNonEmpty(repoID, cfg.DestinationRepo)
+			repoID = source.FirstNonEmpty(repoID, cfg.DestinationRepo)
 			if repoID == "" {
 				repoID = identity.Username + "/mnemosyne-traces"
 			}

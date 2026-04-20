@@ -3,7 +3,6 @@ package opencode
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -186,13 +185,13 @@ func (s *Source) extractSession(db *sql.DB, sessionID, grouping, directory strin
 		if model := source.ExtractMap(payload, "model"); model != nil {
 			provider := source.ExtractString(model, "providerID")
 			modelID := source.ExtractString(model, "modelID")
-			record.Model = firstNonEmpty(strings.Trim(strings.TrimSpace(provider+"/"+modelID), "/"), record.Model)
+			record.Model = source.FirstNonEmpty(strings.Trim(strings.TrimSpace(provider+"/"+modelID), "/"), record.Model)
 		}
 		if tokens := source.ExtractMap(payload, "tokens"); tokens != nil {
-			record.Usage.InputTokens += intNumber(tokens["input"])
-			record.Usage.OutputTokens += intNumber(tokens["output"])
+			record.Usage.InputTokens += source.IntNumber(tokens["input"])
+			record.Usage.OutputTokens += source.IntNumber(tokens["output"])
 			if cache := source.ExtractMap(tokens, "cache"); cache != nil {
-				record.Usage.InputTokens += intNumber(cache["read"]) + intNumber(cache["write"])
+				record.Usage.InputTokens += source.IntNumber(cache["read"]) + source.IntNumber(cache["write"])
 			}
 		}
 
@@ -238,7 +237,7 @@ func (s *Source) extractSession(db *sql.DB, sessionID, grouping, directory strin
 			case "file":
 				urlValue := source.ExtractString(part, "url")
 				block := schema.ContentBlock{
-					Type:      attachmentType(source.ExtractString(part, "mime")),
+					Type:      source.AttachmentType(source.ExtractString(part, "mime")),
 					MediaType: source.ExtractString(part, "mime"),
 				}
 				switch {
@@ -271,32 +270,4 @@ func defaultPath() string {
 		return filepath.Join(home, "Library", "Application Support", "opencode", "opencode.db")
 	}
 	return filepath.Join(home, ".local", "share", "opencode", "opencode.db")
-}
-
-func attachmentType(mime string) string {
-	if strings.HasPrefix(mime, "image/") {
-		return "image"
-	}
-	return "document"
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func intNumber(value any) int {
-	switch typed := value.(type) {
-	case float64:
-		return int(typed)
-	case json.Number:
-		v, _ := typed.Int64()
-		return int(v)
-	default:
-		return 0
-	}
 }

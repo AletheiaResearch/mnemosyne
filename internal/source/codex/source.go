@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/AletheiaResearch/mnemosyne/internal/schema"
@@ -248,15 +249,15 @@ func (s *Source) parseFile(path string) (schema.Record, error) {
 
 		switch item.Type {
 		case "session_meta":
-			record.RecordID = firstNonEmpty(source.ExtractString(item.Payload, "id"), record.RecordID)
-			record.WorkingDir = firstNonEmpty(record.WorkingDir, source.ExtractString(item.Payload, "cwd"))
+			record.RecordID = source.FirstNonEmpty(source.ExtractString(item.Payload, "id"), record.RecordID)
+			record.WorkingDir = source.FirstNonEmpty(record.WorkingDir, source.ExtractString(item.Payload, "cwd"))
 			if git := source.ExtractMap(item.Payload, "git"); git != nil {
-				record.Branch = firstNonEmpty(record.Branch, source.ExtractString(git, "branch"))
+				record.Branch = source.FirstNonEmpty(record.Branch, source.ExtractString(git, "branch"))
 			}
-			record.Model = firstNonEmpty(source.ExtractString(item.Payload, "model_provider"), record.Model)
+			record.Model = source.FirstNonEmpty(source.ExtractString(item.Payload, "model_provider"), record.Model)
 		case "turn_context":
-			record.WorkingDir = firstNonEmpty(record.WorkingDir, source.ExtractString(item.Payload, "cwd"))
-			record.Model = firstNonEmpty(source.ExtractString(item.Payload, "model"), record.Model)
+			record.WorkingDir = source.FirstNonEmpty(record.WorkingDir, source.ExtractString(item.Payload, "cwd"))
+			record.Model = source.FirstNonEmpty(source.ExtractString(item.Payload, "model"), record.Model)
 		case "response_item":
 			switch source.ExtractString(item.Payload, "type") {
 			case "message":
@@ -297,7 +298,7 @@ func (s *Source) parseFile(path string) (schema.Record, error) {
 					block, ok := summary.(map[string]any)
 					if ok {
 						text := source.ExtractString(block, "text")
-						if text != "" && !slicesContains(pendingReasoning, text) {
+						if text != "" && !slices.Contains(pendingReasoning, text) {
 							pendingReasoning = append(pendingReasoning, text)
 						}
 					}
@@ -308,8 +309,8 @@ func (s *Source) parseFile(path string) (schema.Record, error) {
 			case "token_count":
 				info := source.ExtractMap(item.Payload, "info")
 				total := source.ExtractMap(info, "total_token_usage")
-				input := intNumber(total["input_tokens"]) + intNumber(total["cached_input_tokens"])
-				output := intNumber(total["output_tokens"])
+				input := source.IntNumber(total["input_tokens"]) + source.IntNumber(total["cached_input_tokens"])
+				output := source.IntNumber(total["output_tokens"])
 				if input > inputTokens {
 					inputTokens = input
 				}
@@ -318,7 +319,7 @@ func (s *Source) parseFile(path string) (schema.Record, error) {
 				}
 			case "agent_reasoning":
 				text := source.ExtractString(item.Payload, "text")
-				if text != "" && !slicesContains(pendingReasoning, text) {
+				if text != "" && !slices.Contains(pendingReasoning, text) {
 					pendingReasoning = append(pendingReasoning, text)
 				}
 			case "user_message":
@@ -427,34 +428,4 @@ func statusFromOutput(output *schema.ToolOutput) string {
 		return "error"
 	}
 	return "success"
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func slicesContains(items []string, value string) bool {
-	for _, item := range items {
-		if item == value {
-			return true
-		}
-	}
-	return false
-}
-
-func intNumber(value any) int {
-	switch typed := value.(type) {
-	case float64:
-		return int(typed)
-	case json.Number:
-		v, _ := typed.Int64()
-		return int(v)
-	default:
-		return 0
-	}
 }

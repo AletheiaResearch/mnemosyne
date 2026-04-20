@@ -192,7 +192,7 @@ where r.%s = ?`
 		if err := rows.Scan(&sessionID, &agentType, &externalID, &model, &title, &workspaceLabel, &codename, &branch, &repoPath, &repoLabel); err != nil {
 			continue
 		}
-		label := firstNonEmpty(workspaceLabel, codename)
+		label := source.FirstNonEmpty(workspaceLabel, codename)
 		record, err := s.extractSession(ctx, db, schemaInfo, sessionID, repoLabel, repoPath, label, branch, model, title, agentType, externalID)
 		if err != nil || len(record.Turns) == 0 {
 			continue
@@ -216,8 +216,8 @@ func (s *Source) extractSession(ctx context.Context, db *sql.DB, schemaInfo dbSc
 		}
 	}
 
-	sentAtColumn := firstNonEmpty(schemaInfo.messageSentAt, schemaInfo.messageCreatedAt)
-	createdAtColumn := firstNonEmpty(schemaInfo.messageCreatedAt, schemaInfo.messageSentAt)
+	sentAtColumn := source.FirstNonEmpty(schemaInfo.messageSentAt, schemaInfo.messageCreatedAt)
+	createdAtColumn := source.FirstNonEmpty(schemaInfo.messageCreatedAt, schemaInfo.messageSentAt)
 	query := `select %s, %s, %s, %s, %s, %s from %s where %s = ? order by coalesce(%s, %s), %s`
 	rows, err := db.Query(sprintf(query,
 		schemaInfo.messageRole, schemaInfo.messageContent, schemaInfo.messagePayload, schemaInfo.messageModel, sentAtColumn, createdAtColumn,
@@ -257,7 +257,7 @@ func (s *Source) extractSession(ctx context.Context, db *sql.DB, schemaInfo dbSc
 		}
 		turn := schema.Turn{
 			Role:      normalizeRole(role),
-			Timestamp: source.NormalizeTimestamp(firstNonEmpty(sentAt.String, createdAt.String)),
+			Timestamp: source.NormalizeTimestamp(source.FirstNonEmpty(sentAt.String, createdAt.String)),
 			Text:      content,
 		}
 		if messageModel.Valid && messageModel.String != "" && record.Model == "" {
@@ -279,7 +279,7 @@ func (s *Source) extractSession(ctx context.Context, db *sql.DB, schemaInfo dbSc
 		AssistantTurns: source.CountTurns(record.Turns, "assistant"),
 		ToolCalls:      source.CountToolCalls(record.Turns),
 	}
-	record.Model = firstNonEmpty(record.Model, "orchestrator/unknown")
+	record.Model = source.FirstNonEmpty(record.Model, "orchestrator/unknown")
 	record.Grouping = "orchestrator:" + repoDisplayName(repoLabel)
 	return record, nil
 }
@@ -445,8 +445,8 @@ func decodeOrchestratorPayload(raw string, turn *schema.Turn) {
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 		return
 	}
-	turn.Text = firstNonEmpty(turn.Text, source.ExtractString(payload, "text", "content"))
-	turn.Reasoning = firstNonEmpty(turn.Reasoning, source.ExtractString(payload, "reasoning"))
+	turn.Text = source.FirstNonEmpty(turn.Text, source.ExtractString(payload, "text", "content"))
+	turn.Reasoning = source.FirstNonEmpty(turn.Reasoning, source.ExtractString(payload, "reasoning"))
 	for _, item := range source.ExtractSlice(payload, "tool_calls") {
 		callMap, ok := item.(map[string]any)
 		if !ok {
@@ -502,15 +502,6 @@ func sprintf(format string, parts ...string) string {
 	return fmt.Sprintf(format, args...)
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
-}
-
 func derivedWorkingDir(repoPath, workspaceLabel string) string {
 	if repoPath == "" || workspaceLabel == "" {
 		return ""
@@ -536,13 +527,13 @@ func preferExternalRecord(sessionID, repoLabel, workingDir, branch, model, title
 	// orchestrator wrap. The seenRecordIDs dedup in extract collapses the
 	// orchestrator record with the raw source record only when the IDs match
 	// byte-for-byte; the bare externalID alone would desync that path.
-	record.RecordID = firstNonEmpty(external.RecordID, externalID, sessionID)
+	record.RecordID = source.FirstNonEmpty(external.RecordID, externalID, sessionID)
 	record.Origin = "orchestrator"
 	record.Grouping = "orchestrator:" + repoDisplayName(repoLabel)
-	record.WorkingDir = firstNonEmpty(workingDir, record.WorkingDir)
-	record.Branch = firstNonEmpty(branch, record.Branch)
-	record.Title = firstNonEmpty(title, record.Title)
-	record.Model = firstNonEmpty(model, record.Model, "orchestrator/unknown")
+	record.WorkingDir = source.FirstNonEmpty(workingDir, record.WorkingDir)
+	record.Branch = source.FirstNonEmpty(branch, record.Branch)
+	record.Title = source.FirstNonEmpty(title, record.Title)
+	record.Model = source.FirstNonEmpty(model, record.Model, "orchestrator/unknown")
 	if record.Extensions == nil {
 		record.Extensions = make(map[string]any)
 	}

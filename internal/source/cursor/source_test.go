@@ -17,10 +17,10 @@ type bubbleSpec struct {
 }
 
 type composerSpec struct {
-	ID       string
-	Headers  []string
+	ID        string
+	Headers   []string
 	Workspace string
-	Bubbles  []bubbleSpec
+	Bubbles   []bubbleSpec
 }
 
 func buildCursorDB(t *testing.T, composers []composerSpec) string {

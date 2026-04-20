@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -142,7 +143,7 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return cfg, err
 	}
-	if len(strings.TrimSpace(string(data))) == 0 {
+	if len(bytes.TrimSpace(data)) == 0 {
 		return cfg, nil
 	}
 

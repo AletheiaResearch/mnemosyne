@@ -307,12 +307,12 @@ func (s *surveyScreen) groupingsTable(width int) string {
 	}
 
 	header := lipgloss.JoinHorizontal(lipgloss.Top,
-		common.LabelStyle.Copy().Width(cursorW).Render(""),
-		common.LabelStyle.Copy().Width(originW).Render("origin"),
-		common.LabelStyle.Copy().Width(idW).Render("id"),
-		common.LabelStyle.Copy().Width(recordsW).Align(lipgloss.Right).Render("records"),
-		common.LabelStyle.Copy().Width(bytesW).Align(lipgloss.Right).Render("size"),
-		common.LabelStyle.Copy().Width(excludedW).Align(lipgloss.Right).Render(""),
+		common.LabelStyle.Width(cursorW).Render(""),
+		common.LabelStyle.Width(originW).Render("origin"),
+		common.LabelStyle.Width(idW).Render("id"),
+		common.LabelStyle.Width(recordsW).Align(lipgloss.Right).Render("records"),
+		common.LabelStyle.Width(bytesW).Align(lipgloss.Right).Render("size"),
+		common.LabelStyle.Width(excludedW).Align(lipgloss.Right).Render(""),
 	)
 	rule := common.SubtleStyle.Render(strings.Repeat("─", cursorW+originW+idW+recordsW+bytesW+excludedW))
 
@@ -365,12 +365,12 @@ func (s *surveyScreen) renderGroupingRow(g surveyGrouping, idx, cursorW, originW
 	}
 	markStyle := common.WarnStyle
 	return lipgloss.JoinHorizontal(lipgloss.Top,
-		common.SubtleStyle.Copy().Width(cursorW).Render(cursorText),
-		common.AccentStyle.Copy().Width(originW).Render(originText),
-		idStyle.Copy().Width(idW).Render(idDisplay),
-		common.ValueStyle.Copy().Width(recordsW).Align(lipgloss.Right).Render(recordsText),
-		common.ValueStyle.Copy().Width(bytesW).Align(lipgloss.Right).Render(sizeText),
-		markStyle.Copy().Width(excludedW).Align(lipgloss.Right).Render(markText),
+		common.SubtleStyle.Width(cursorW).Render(cursorText),
+		common.AccentStyle.Width(originW).Render(originText),
+		idStyle.Width(idW).Render(idDisplay),
+		common.ValueStyle.Width(recordsW).Align(lipgloss.Right).Render(recordsText),
+		common.ValueStyle.Width(bytesW).Align(lipgloss.Right).Render(sizeText),
+		markStyle.Width(excludedW).Align(lipgloss.Right).Render(markText),
 	)
 }
 
