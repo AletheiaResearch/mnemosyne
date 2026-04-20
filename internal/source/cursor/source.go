@@ -195,7 +195,7 @@ func (s *Source) extractComposer(db *sql.DB, composerID string, value []byte, gr
 			turn.Reasoning = source.ExtractString(thinking, "text")
 		}
 		if modelInfo := source.ExtractMap(payload, "modelInfo"); modelInfo != nil {
-			record.Model = firstNonEmpty(source.ExtractString(modelInfo, "modelName"), record.Model)
+			record.Model = source.FirstNonEmpty(source.ExtractString(modelInfo, "modelName"), record.Model)
 		}
 		if tokenCount := source.ExtractMap(payload, "tokenCount"); tokenCount != nil {
 			record.Usage.InputTokens += intNumber(tokenCount["inputTokens"])
@@ -333,15 +333,6 @@ func defaultPath() string {
 	default:
 		return filepath.Join(home, ".config", "Cursor", "User", "globalStorage", "state.vscdb")
 	}
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func intNumber(value any) int {

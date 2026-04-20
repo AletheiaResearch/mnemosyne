@@ -186,7 +186,7 @@ func (s *Source) extractSession(db *sql.DB, sessionID, grouping, directory strin
 		if model := source.ExtractMap(payload, "model"); model != nil {
 			provider := source.ExtractString(model, "providerID")
 			modelID := source.ExtractString(model, "modelID")
-			record.Model = firstNonEmpty(strings.Trim(strings.TrimSpace(provider+"/"+modelID), "/"), record.Model)
+			record.Model = source.FirstNonEmpty(strings.Trim(strings.TrimSpace(provider+"/"+modelID), "/"), record.Model)
 		}
 		if tokens := source.ExtractMap(payload, "tokens"); tokens != nil {
 			record.Usage.InputTokens += intNumber(tokens["input"])
@@ -278,15 +278,6 @@ func attachmentType(mime string) string {
 		return "image"
 	}
 	return "document"
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func intNumber(value any) int {

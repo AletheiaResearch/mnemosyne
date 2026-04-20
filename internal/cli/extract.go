@@ -323,15 +323,6 @@ func resolveExtractScope(scopeFlag, originScope string, includeAll bool) string 
 	return strings.TrimSpace(originScope)
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
-}
-
 func sourcePriority(name string) int {
 	if name == "orchestrator" {
 		return 0

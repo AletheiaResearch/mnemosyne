@@ -134,7 +134,7 @@ func (s *Source) parseFile(path string, grouping string) (schema.Record, error) 
 	}
 
 	record := schema.Record{
-		RecordID:  firstNonEmpty(source.ExtractString(payload, "sessionId"), strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))),
+		RecordID:  source.FirstNonEmpty(source.ExtractString(payload, "sessionId"), strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))),
 		Origin:    s.Name(),
 		Grouping:  grouping,
 		StartedAt: source.NormalizeTimestamp(payload["startTime"]),
@@ -231,13 +231,13 @@ func (s *Source) parseFile(path string, grouping string) (schema.Record, error) 
 				if output := callMap["output"]; output != nil {
 					call.Output = &schema.ToolOutput{Raw: output}
 				}
-				call.Status = firstNonEmpty(source.ExtractString(callMap, "status"), statusFromOutput(call.Output))
+				call.Status = source.FirstNonEmpty(source.ExtractString(callMap, "status"), statusFromOutput(call.Output))
 				turn.ToolCalls = append(turn.ToolCalls, call)
 			}
 			tokens := source.ExtractMap(message, "tokens")
 			record.Usage.InputTokens += intNumber(tokens["input"]) + intNumber(tokens["cached"])
 			record.Usage.OutputTokens += intNumber(tokens["output"])
-			record.Model = firstNonEmpty(source.ExtractString(message, "model"), record.Model)
+			record.Model = source.FirstNonEmpty(source.ExtractString(message, "model"), record.Model)
 			record.Turns = append(record.Turns, turn)
 		}
 	}
@@ -279,15 +279,6 @@ func attachmentType(mime string) string {
 		return "image"
 	}
 	return "document"
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func intNumber(value any) int {

@@ -248,15 +248,15 @@ func (s *Source) parseFile(path string) (schema.Record, error) {
 
 		switch item.Type {
 		case "session_meta":
-			record.RecordID = firstNonEmpty(source.ExtractString(item.Payload, "id"), record.RecordID)
-			record.WorkingDir = firstNonEmpty(record.WorkingDir, source.ExtractString(item.Payload, "cwd"))
+			record.RecordID = source.FirstNonEmpty(source.ExtractString(item.Payload, "id"), record.RecordID)
+			record.WorkingDir = source.FirstNonEmpty(record.WorkingDir, source.ExtractString(item.Payload, "cwd"))
 			if git := source.ExtractMap(item.Payload, "git"); git != nil {
-				record.Branch = firstNonEmpty(record.Branch, source.ExtractString(git, "branch"))
+				record.Branch = source.FirstNonEmpty(record.Branch, source.ExtractString(git, "branch"))
 			}
-			record.Model = firstNonEmpty(source.ExtractString(item.Payload, "model_provider"), record.Model)
+			record.Model = source.FirstNonEmpty(source.ExtractString(item.Payload, "model_provider"), record.Model)
 		case "turn_context":
-			record.WorkingDir = firstNonEmpty(record.WorkingDir, source.ExtractString(item.Payload, "cwd"))
-			record.Model = firstNonEmpty(source.ExtractString(item.Payload, "model"), record.Model)
+			record.WorkingDir = source.FirstNonEmpty(record.WorkingDir, source.ExtractString(item.Payload, "cwd"))
+			record.Model = source.FirstNonEmpty(source.ExtractString(item.Payload, "model"), record.Model)
 		case "response_item":
 			switch source.ExtractString(item.Payload, "type") {
 			case "message":
@@ -427,15 +427,6 @@ func statusFromOutput(output *schema.ToolOutput) string {
 		return "error"
 	}
 	return "success"
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func slicesContains(items []string, value string) bool {
