@@ -237,7 +237,7 @@ func (s *Source) extractSession(db *sql.DB, sessionID, grouping, directory strin
 			case "file":
 				urlValue := source.ExtractString(part, "url")
 				block := schema.ContentBlock{
-					Type:      attachmentType(source.ExtractString(part, "mime")),
+					Type:      source.AttachmentType(source.ExtractString(part, "mime")),
 					MediaType: source.ExtractString(part, "mime"),
 				}
 				switch {
@@ -270,11 +270,4 @@ func defaultPath() string {
 		return filepath.Join(home, "Library", "Application Support", "opencode", "opencode.db")
 	}
 	return filepath.Join(home, ".local", "share", "opencode", "opencode.db")
-}
-
-func attachmentType(mime string) string {
-	if strings.HasPrefix(mime, "image/") {
-		return "image"
-	}
-	return "document"
 }

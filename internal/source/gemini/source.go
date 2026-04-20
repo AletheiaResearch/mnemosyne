@@ -171,14 +171,14 @@ func (s *Source) parseFile(path string, grouping string) (schema.Record, error) 
 					case source.ExtractMap(block, "inlineData") != nil:
 						data := source.ExtractMap(block, "inlineData")
 						turn.Attachments = append(turn.Attachments, schema.ContentBlock{
-							Type:      attachmentType(source.ExtractString(data, "mimeType")),
+							Type:      source.AttachmentType(source.ExtractString(data, "mimeType")),
 							MediaType: source.ExtractString(data, "mimeType"),
 							Data:      source.ExtractString(data, "data"),
 						})
 					case source.ExtractMap(block, "fileData") != nil:
 						data := source.ExtractMap(block, "fileData")
 						turn.Attachments = append(turn.Attachments, schema.ContentBlock{
-							Type:      attachmentType(source.ExtractString(data, "mimeType")),
+							Type:      source.AttachmentType(source.ExtractString(data, "mimeType")),
 							MediaType: source.ExtractString(data, "mimeType"),
 							URL:       source.ExtractString(data, "fileUri"),
 						})
@@ -272,13 +272,6 @@ func compactRecord(record schema.Record) string {
 	record.Grouping = ""
 	data, _ := json.Marshal(record)
 	return string(data)
-}
-
-func attachmentType(mime string) string {
-	if strings.HasPrefix(mime, "image/") {
-		return "image"
-	}
-	return "document"
 }
 
 func statusFromOutput(output *schema.ToolOutput) string {

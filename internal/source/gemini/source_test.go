@@ -299,21 +299,6 @@ func TestLookupSessionFindsBySessionID(t *testing.T) {
 	}
 }
 
-func TestAttachmentTypeCategorizesMIME(t *testing.T) {
-	t.Parallel()
-	cases := []struct{ mime, want string }{
-		{"image/png", "image"},
-		{"image/jpeg", "image"},
-		{"application/pdf", "document"},
-		{"", "document"},
-	}
-	for _, tc := range cases {
-		if got := attachmentType(tc.mime); got != tc.want {
-			t.Fatalf("attachmentType(%q) = %q, want %q", tc.mime, got, tc.want)
-		}
-	}
-}
-
 func TestDiscoverReturnsNilWhenRootMissing(t *testing.T) {
 	t.Parallel()
 	src := New(filepath.Join(t.TempDir(), "missing"))

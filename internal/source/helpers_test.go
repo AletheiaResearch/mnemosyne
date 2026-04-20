@@ -286,6 +286,21 @@ func TestCollectFilesGathersMatchesSortedAndSkipsMissingRoots(t *testing.T) {
 	}
 }
 
+func TestAttachmentTypeCategorizesMIME(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ mime, want string }{
+		{"image/png", "image"},
+		{"image/jpeg", "image"},
+		{"application/pdf", "document"},
+		{"", "document"},
+	}
+	for _, tc := range cases {
+		if got := AttachmentType(tc.mime); got != tc.want {
+			t.Fatalf("AttachmentType(%q) = %q, want %q", tc.mime, got, tc.want)
+		}
+	}
+}
+
 func TestOptionalSwallowsNotExist(t *testing.T) {
 	t.Parallel()
 

@@ -269,6 +269,15 @@ func IntNumber(value any) int {
 	}
 }
 
+// AttachmentType buckets a MIME type into the small set of attachment
+// categories the schema recognises.
+func AttachmentType(mime string) string {
+	if strings.HasPrefix(mime, "image/") {
+		return "image"
+	}
+	return "document"
+}
+
 func ExtractString(input map[string]any, keys ...string) string {
 	for _, key := range keys {
 		if value, ok := input[key]; ok {
