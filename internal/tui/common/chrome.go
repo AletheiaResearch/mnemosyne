@@ -106,7 +106,7 @@ func Panel(title, body string, width int) string {
 		width = 6
 	}
 	inner := width - 2 // border columns
-	box := PanelStyle.Copy().Width(inner).Render(body)
+	box := PanelStyle.Width(inner).Render(body)
 	if title == "" {
 		return box
 	}
@@ -119,6 +119,6 @@ func Panel(title, body string, width int) string {
 // KV renders a key/value row with the key padded to keyWidth and the value
 // rendered as-is (already styled by caller if needed).
 func KV(key, value string, keyWidth int) string {
-	k := LabelStyle.Copy().Width(keyWidth).Render(key)
+	k := LabelStyle.Width(keyWidth).Render(key)
 	return lipgloss.JoinHorizontal(lipgloss.Top, k, " ", value)
 }

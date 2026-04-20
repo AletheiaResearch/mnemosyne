@@ -93,7 +93,7 @@ func (m *menuModel) View() string {
 
 	var rows []string
 	rowStyle := lipgloss.NewStyle().Width(panelWidth - 4)
-	focusStyle := rowStyle.Copy().
+	focusStyle := rowStyle.
 		Foreground(common.ColorOnBrand).
 		Background(common.ColorBrand).
 		Bold(true)
@@ -119,7 +119,7 @@ func (m *menuModel) View() string {
 		}
 	}
 
-	panel := common.PanelStyle.Copy().
+	panel := common.PanelStyle.
 		Width(panelWidth).
 		Render(strings.Join(rows, "\n"))
 
