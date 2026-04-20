@@ -3,7 +3,6 @@ package opencode
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -189,10 +188,10 @@ func (s *Source) extractSession(db *sql.DB, sessionID, grouping, directory strin
 			record.Model = source.FirstNonEmpty(strings.Trim(strings.TrimSpace(provider+"/"+modelID), "/"), record.Model)
 		}
 		if tokens := source.ExtractMap(payload, "tokens"); tokens != nil {
-			record.Usage.InputTokens += intNumber(tokens["input"])
-			record.Usage.OutputTokens += intNumber(tokens["output"])
+			record.Usage.InputTokens += source.IntNumber(tokens["input"])
+			record.Usage.OutputTokens += source.IntNumber(tokens["output"])
 			if cache := source.ExtractMap(tokens, "cache"); cache != nil {
-				record.Usage.InputTokens += intNumber(cache["read"]) + intNumber(cache["write"])
+				record.Usage.InputTokens += source.IntNumber(cache["read"]) + source.IntNumber(cache["write"])
 			}
 		}
 
@@ -278,16 +277,4 @@ func attachmentType(mime string) string {
 		return "image"
 	}
 	return "document"
-}
-
-func intNumber(value any) int {
-	switch typed := value.(type) {
-	case float64:
-		return int(typed)
-	case json.Number:
-		v, _ := typed.Int64()
-		return int(v)
-	default:
-		return 0
-	}
 }

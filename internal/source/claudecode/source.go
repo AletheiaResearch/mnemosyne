@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -361,8 +360,8 @@ func assembleClaudeRecord(entries []map[string]any, recordID string) schema.Reco
 				}
 			}
 			usage := source.ExtractMap(message, "usage")
-			record.Usage.InputTokens += intNumber(usage["input_tokens"]) + intNumber(usage["cache_read_input_tokens"])
-			record.Usage.OutputTokens += intNumber(usage["output_tokens"])
+			record.Usage.InputTokens += source.IntNumber(usage["input_tokens"]) + source.IntNumber(usage["cache_read_input_tokens"])
+			record.Usage.OutputTokens += source.IntNumber(usage["output_tokens"])
 			if record.Model == "" {
 				record.Model = source.ExtractString(message, "model")
 			}
@@ -419,16 +418,4 @@ func decodeProjectName(name string) string {
 	}
 	decoded := strings.ReplaceAll(name, "-", string(filepath.Separator))
 	return source.DisplayLabelFromPath(decoded)
-}
-
-func intNumber(value any) int {
-	switch typed := value.(type) {
-	case float64:
-		return int(typed)
-	case json.Number:
-		v, _ := typed.Int64()
-		return int(v)
-	default:
-		return 0
-	}
 }

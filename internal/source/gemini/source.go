@@ -235,8 +235,8 @@ func (s *Source) parseFile(path string, grouping string) (schema.Record, error) 
 				turn.ToolCalls = append(turn.ToolCalls, call)
 			}
 			tokens := source.ExtractMap(message, "tokens")
-			record.Usage.InputTokens += intNumber(tokens["input"]) + intNumber(tokens["cached"])
-			record.Usage.OutputTokens += intNumber(tokens["output"])
+			record.Usage.InputTokens += source.IntNumber(tokens["input"]) + source.IntNumber(tokens["cached"])
+			record.Usage.OutputTokens += source.IntNumber(tokens["output"])
 			record.Model = source.FirstNonEmpty(source.ExtractString(message, "model"), record.Model)
 			record.Turns = append(record.Turns, turn)
 		}
@@ -279,18 +279,6 @@ func attachmentType(mime string) string {
 		return "image"
 	}
 	return "document"
-}
-
-func intNumber(value any) int {
-	switch typed := value.(type) {
-	case float64:
-		return int(typed)
-	case json.Number:
-		v, _ := typed.Int64()
-		return int(v)
-	default:
-		return 0
-	}
 }
 
 func statusFromOutput(output *schema.ToolOutput) string {

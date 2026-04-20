@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/AletheiaResearch/mnemosyne/internal/schema"
@@ -297,7 +298,7 @@ func (s *Source) parseFile(path string) (schema.Record, error) {
 					block, ok := summary.(map[string]any)
 					if ok {
 						text := source.ExtractString(block, "text")
-						if text != "" && !slicesContains(pendingReasoning, text) {
+						if text != "" && !slices.Contains(pendingReasoning, text) {
 							pendingReasoning = append(pendingReasoning, text)
 						}
 					}
@@ -308,8 +309,8 @@ func (s *Source) parseFile(path string) (schema.Record, error) {
 			case "token_count":
 				info := source.ExtractMap(item.Payload, "info")
 				total := source.ExtractMap(info, "total_token_usage")
-				input := intNumber(total["input_tokens"]) + intNumber(total["cached_input_tokens"])
-				output := intNumber(total["output_tokens"])
+				input := source.IntNumber(total["input_tokens"]) + source.IntNumber(total["cached_input_tokens"])
+				output := source.IntNumber(total["output_tokens"])
 				if input > inputTokens {
 					inputTokens = input
 				}
@@ -318,7 +319,7 @@ func (s *Source) parseFile(path string) (schema.Record, error) {
 				}
 			case "agent_reasoning":
 				text := source.ExtractString(item.Payload, "text")
-				if text != "" && !slicesContains(pendingReasoning, text) {
+				if text != "" && !slices.Contains(pendingReasoning, text) {
 					pendingReasoning = append(pendingReasoning, text)
 				}
 			case "user_message":
@@ -427,25 +428,4 @@ func statusFromOutput(output *schema.ToolOutput) string {
 		return "error"
 	}
 	return "success"
-}
-
-func slicesContains(items []string, value string) bool {
-	for _, item := range items {
-		if item == value {
-			return true
-		}
-	}
-	return false
-}
-
-func intNumber(value any) int {
-	switch typed := value.(type) {
-	case float64:
-		return int(typed)
-	case json.Number:
-		v, _ := typed.Int64()
-		return int(v)
-	default:
-		return 0
-	}
 }

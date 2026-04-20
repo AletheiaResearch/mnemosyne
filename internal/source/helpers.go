@@ -255,6 +255,20 @@ func FirstNonEmpty(values ...string) string {
 	return ""
 }
 
+// IntNumber coerces a JSON-decoded numeric value into an int. Covers both
+// encoding/json's float64 default and json.Number when decoders opt in.
+func IntNumber(value any) int {
+	switch typed := value.(type) {
+	case float64:
+		return int(typed)
+	case json.Number:
+		v, _ := typed.Int64()
+		return int(v)
+	default:
+		return 0
+	}
+}
+
 func ExtractString(input map[string]any, keys ...string) string {
 	for _, key := range keys {
 		if value, ok := input[key]; ok {
