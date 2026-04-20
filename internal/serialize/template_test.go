@@ -675,7 +675,7 @@ func TestGoTemplatesSkipSyntheticToolMessages(t *testing.T) {
 	//     row — otherwise the alternation check fires on `assistant ->
 	//     assistant`.
 	cases := []struct {
-		name string
+		name  string
 		turns []schema.Turn
 	}{
 		{

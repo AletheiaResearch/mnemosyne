@@ -170,12 +170,12 @@ func sessionKey(entry ManifestEntry) string {
 // Decision per local entry (first rule that matches wins):
 //  1. A remote entry exists with the same (SessionID, Format) logical id:
 //     - If the content tuple also matches → no upload; the local entry
-//       adopts the remote File so Merge collapses them.
+//     adopts the remote File so Merge collapses them.
 //     - If the content tuple differs → upload under the remote's File
-//       (overwriting it). The stale remote entry is claimed so it is not
-//       retained. This is how a moved-and-grown session (very common for
-//       Codex sessions aging into archived_sessions/) stays as one entry
-//       instead of accumulating.
+//     (overwriting it). The stale remote entry is claimed so it is not
+//     retained. This is how a moved-and-grown session (very common for
+//     Codex sessions aging into archived_sessions/) stays as one entry
+//     instead of accumulating.
 //  2. A remote entry exists with the same File and an identical content
 //     tuple → no upload; the local entry passes through unchanged.
 //  3. A remote entry exists with a different File but an identical
