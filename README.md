@@ -26,6 +26,19 @@ Or use subcommands directly:
 
 The shorthand `mem` is installed as a symlink.
 
+## Documentation
+
+- `man mnemosyne` — full reference, plus one page per subcommand
+  (`man mnemosyne-extract`, etc.). Installed by the Homebrew cask;
+  building from source: `make docs && man -l man/man1/mnemosyne.1`.
+- `tldr mnemosyne` — concise example-driven help, served via
+  [tldr-pages](https://github.com/tldr-pages/tldr).
+- `ethical-tldr mnemosyne` — the same examples via the
+  [ethical-tldr](https://codeberg.org/small-hack/ethical-tldr) fork.
+
+The tldr source lives at [`docs/tldr/mnemosyne.md`](docs/tldr/mnemosyne.md);
+see that directory's README for submission instructions.
+
 ## License
 
 MIT for the tool. Datasets you produce carry whatever license you assign at publish time.
