@@ -84,6 +84,24 @@ func newRootCommand(rt *runtime) *cobra.Command {
 	return cmd
 }
 
+// NewDocsRoot returns the root cobra.Command wired for offline documentation
+// generation. The runtime is stubbed with discard writers because doc
+// generators walk the command tree without executing it.
+func NewDocsRoot() *cobra.Command {
+	rt := &runtime{stdout: io.Discard, stderr: io.Discard}
+	cmd := newRootCommand(rt)
+	cmd.Use = "mnemosyne"
+	disableAutoGenTag(cmd)
+	return cmd
+}
+
+func disableAutoGenTag(cmd *cobra.Command) {
+	cmd.DisableAutoGenTag = true
+	for _, child := range cmd.Commands() {
+		disableAutoGenTag(child)
+	}
+}
+
 func newLogger(verbose bool) *slog.Logger {
 	level := slog.LevelInfo
 	if verbose {
