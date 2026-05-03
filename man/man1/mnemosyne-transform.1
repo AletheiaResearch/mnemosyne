@@ -1,0 +1,71 @@
+.nh
+.TH "MNEMOSYNE" "1" "Jan 1970" "Mnemosyne" "Mnemosyne Manual"
+
+.SH NAME
+mnemosyne-transform - Transform canonical JSONL into another serializer format
+
+
+.SH SYNOPSIS
+\fBmnemosyne transform [flags]\fP
+
+
+.SH DESCRIPTION
+Transform canonical JSONL into another serializer format
+
+
+.SH OPTIONS
+\fB--add-generation-prompt\fP[=false]
+	set add_generation_prompt to true for template rendering
+
+.PP
+\fB--bos-token\fP=""
+	value exposed to templates as bos_token
+
+.PP
+\fB--eos-token\fP=""
+	value exposed to templates as eos_token
+
+.PP
+\fB--format\fP="canonical"
+	serializer to use
+
+.PP
+\fB-h\fP, \fB--help\fP[=false]
+	help for transform
+
+.PP
+\fB--input\fP=""
+	path to canonical JSONL
+
+.PP
+\fB--no-tools\fP[=false]
+	skip tool inference and leave the template's tools list empty
+
+.PP
+\fB--output\fP=""
+	path to transformed output
+
+.PP
+\fB--template-file\fP=""
+	render through a chat template loaded from this file (.tmpl or .jinja)
+
+.PP
+\fB--template-name\fP=""
+	render through a builtin chat template (e.g. chatml, hermes, deepseekr1)
+
+.PP
+\fB--tools-file\fP=""
+	JSON file of tool schemas to expose as \fBtools\fR in template context (overrides inference)
+
+
+.SH OPTIONS INHERITED FROM PARENT COMMANDS
+\fB--config\fP=""
+	path to the settings file
+
+.PP
+\fB--verbose\fP[=false]
+	enable debug logging
+
+
+.SH SEE ALSO
+\fBmnemosyne(1)\fP
