@@ -1,0 +1,55 @@
+.nh
+.TH "MNEMOSYNE" "1" "May 2026" "Mnemosyne" "Mnemosyne Manual"
+
+.SH NAME
+mnemosyne-attest - Review an export and record attestation text
+
+
+.SH SYNOPSIS
+\fBmnemosyne attest [flags]\fP
+
+
+.SH DESCRIPTION
+Review an export and record attestation text
+
+
+.SH OPTIONS
+\fB--entity-scan\fP=""
+	attestation text describing the sensitive-entity interview
+
+.PP
+\fB--file\fP=""
+	path to the export file to attest
+
+.PP
+\fB--full-name\fP=""
+	full name to scan for
+
+.PP
+\fB-h\fP, \fB--help\fP[=false]
+	help for attest
+
+.PP
+\fB--identity-scan\fP=""
+	attestation text describing the identity scan
+
+.PP
+\fB--manual-review\fP=""
+	attestation text describing the manual review sample
+
+.PP
+\fB--skip-name-scan\fP[=false]
+	skip the full-name scan
+
+
+.SH OPTIONS INHERITED FROM PARENT COMMANDS
+\fB--config\fP=""
+	path to the settings file
+
+.PP
+\fB--verbose\fP[=false]
+	enable debug logging
+
+
+.SH SEE ALSO
+\fBmnemosyne(1)\fP

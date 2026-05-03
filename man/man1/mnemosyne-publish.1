@@ -1,0 +1,43 @@
+.nh
+.TH "MNEMOSYNE" "1" "May 2026" "Mnemosyne" "Mnemosyne Manual"
+
+.SH NAME
+mnemosyne-publish - Publish an attested export
+
+
+.SH SYNOPSIS
+\fBmnemosyne publish [flags]\fP
+
+
+.SH DESCRIPTION
+Publish an attested export
+
+
+.SH OPTIONS
+\fB-h\fP, \fB--help\fP[=false]
+	help for publish
+
+.PP
+\fB--isolate\fP[=false]
+	upload per-session native files produced by \fBextract --isolate\fR
+
+.PP
+\fB--publish-attestation\fP=""
+	attestation text approving publication
+
+.PP
+\fB--repo\fP=""
+	dataset repository identifier
+
+
+.SH OPTIONS INHERITED FROM PARENT COMMANDS
+\fB--config\fP=""
+	path to the settings file
+
+.PP
+\fB--verbose\fP[=false]
+	enable debug logging
+
+
+.SH SEE ALSO
+\fBmnemosyne(1)\fP

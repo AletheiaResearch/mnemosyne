@@ -1,0 +1,79 @@
+.nh
+.TH "MNEMOSYNE" "1" "May 2026" "Mnemosyne" "Mnemosyne Manual"
+
+.SH NAME
+mnemosyne-configure - Read or modify persistent settings
+
+
+.SH SYNOPSIS
+\fBmnemosyne configure [flags]\fP
+
+
+.SH DESCRIPTION
+Read or modify persistent settings
+
+
+.SH OPTIONS
+\fB--chat-template-add-generation-prompt\fP[=false]
+	default value of the add_generation_prompt flag for chat templates
+
+.PP
+\fB--chat-template-bos-token\fP=""
+	default BOS token supplied to chat templates
+
+.PP
+\fB--chat-template-clear\fP[=false]
+	clear persisted chat template defaults
+
+.PP
+\fB--chat-template-eos-token\fP=""
+	default EOS token supplied to chat templates
+
+.PP
+\fB--chat-template-file\fP=""
+	default path to a custom chat template for transform
+
+.PP
+\fB--chat-template-name\fP=""
+	default builtin chat template for transform (e.g. chatml, zephyr, vicuna)
+
+.PP
+\fB--confirm-scope\fP[=false]
+	mark grouping selection as confirmed
+
+.PP
+\fB--destination-repo\fP=""
+	dataset repository identifier
+
+.PP
+\fB--exclude\fP=[]
+	grouping label to exclude
+
+.PP
+\fB--handle\fP=[]
+	handle to anonymize
+
+.PP
+\fB-h\fP, \fB--help\fP[=false]
+	help for configure
+
+.PP
+\fB--redact\fP=[]
+	literal string to redact
+
+.PP
+\fB--scope\fP=""
+	origin scope to extract
+
+
+.SH OPTIONS INHERITED FROM PARENT COMMANDS
+\fB--config\fP=""
+	path to the settings file
+
+.PP
+\fB--verbose\fP[=false]
+	enable debug logging
+
+
+.SH SEE ALSO
+\fBmnemosyne(1)\fP
