@@ -1,0 +1,58 @@
+name: codeberg mirror
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure SSH
+        shell: bash
+        env:
+          CODEBERG_MIRROR_SSH_KEY: ${{ secrets.CODEBERG_MIRROR_SSH_KEY }}
+          # Pin Codeberg's verified SSH host keys in this secret.
+          CODEBERG_KNOWN_HOSTS: ${{ secrets.CODEBERG_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CODEBERG_MIRROR_SSH_KEY}" ]; then
+            echo "CODEBERG_MIRROR_SSH_KEY is not configured."
+            exit 1
+          fi
+
+          if [ -z "${CODEBERG_KNOWN_HOSTS}" ]; then
+            echo "CODEBERG_KNOWN_HOSTS is not configured."
+            exit 1
+          fi
+
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${CODEBERG_MIRROR_SSH_KEY}" > ~/.ssh/codeberg_mirror
+          chmod 600 ~/.ssh/codeberg_mirror
+          printf '%s\n' "${CODEBERG_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Push to Codeberg
+        shell: bash
+        env:
+          GIT_SSH_COMMAND: ssh -i ~/.ssh/codeberg_mirror -o IdentitiesOnly=yes
+        run: |
+          set -euo pipefail
+
+          git remote add codeberg ssh://git@codeberg.org/AletheiaResearch/mnemosyne.git
+          git fetch origin main --tags
+          git push codeberg refs/remotes/origin/main:refs/heads/main
+          git push codeberg --tags
