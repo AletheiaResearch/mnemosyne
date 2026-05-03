@@ -16,9 +16,9 @@
 
 `mnemosyne configure --destination-repo {{username/traces}}`
 
-- Extract conversations into a canonical JSONL archive:
+- Extract every detected source's conversations into a canonical JSONL archive:
 
-`mnemosyne extract --output {{path/to/export.jsonl}}`
+`mnemosyne extract --include-all --output {{path/to/export.jsonl}}`
 
 - Validate a canonical JSONL export:
 
@@ -26,7 +26,7 @@
 
 - Record an attestation after manual review of an export:
 
-`mnemosyne attest --identity-scan "{{note}}" --entity-scan "{{note}}" --manual-review "{{note}}"`
+`mnemosyne attest --skip-name-scan --identity-scan "{{declined name scan}}" --entity-scan "{{note}}" --manual-review "{{note}}"`
 
 - Publish an attested export to the configured repository:
 
