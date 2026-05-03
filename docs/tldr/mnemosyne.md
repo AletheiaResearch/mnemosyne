@@ -34,4 +34,4 @@
 
 - Transform a canonical JSONL export into another serializer format:
 
-`mnemosyne transform --input {{in.jsonl}} --format {{sharegpt}} --output {{out.jsonl}}`
+`mnemosyne transform --input {{in.jsonl}} --format {{openai}} --output {{out.jsonl}}`
