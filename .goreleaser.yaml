@@ -5,6 +5,7 @@ project_name: mnemosyne
 before:
   hooks:
     - go test ./...
+    - go run ./cmd/gendocs ./man/man1
 
 builds:
   - id: mnemosyne
@@ -27,6 +28,7 @@ archives:
     files:
       - README.md
       - schemas/**
+      - man/man1/*.1
 
 homebrew_casks:
   - name: mnemosyne
@@ -39,6 +41,19 @@ homebrew_casks:
     description: Export coding-assistant histories to unified, anonymized archives.
     binaries:
       - mnemosyne
+    manpages:
+      - man/man1/mnemosyne.1
+      - man/man1/mnemosyne-attest.1
+      - man/man1/mnemosyne-configure.1
+      - man/man1/mnemosyne-extract.1
+      - man/man1/mnemosyne-inspect.1
+      - man/man1/mnemosyne-publish.1
+      - man/man1/mnemosyne-runlog.1
+      - man/man1/mnemosyne-serializers.1
+      - man/man1/mnemosyne-survey.1
+      - man/man1/mnemosyne-templates.1
+      - man/man1/mnemosyne-transform.1
+      - man/man1/mnemosyne-validate.1
     dependencies:
       - formula: hf
     hooks:
@@ -57,6 +72,19 @@ homebrew_casks:
     description: Export coding-assistant histories to unified, anonymized archives.
     binaries:
       - mnemosyne
+    manpages:
+      - man/man1/mnemosyne.1
+      - man/man1/mnemosyne-attest.1
+      - man/man1/mnemosyne-configure.1
+      - man/man1/mnemosyne-extract.1
+      - man/man1/mnemosyne-inspect.1
+      - man/man1/mnemosyne-publish.1
+      - man/man1/mnemosyne-runlog.1
+      - man/man1/mnemosyne-serializers.1
+      - man/man1/mnemosyne-survey.1
+      - man/man1/mnemosyne-templates.1
+      - man/man1/mnemosyne-transform.1
+      - man/man1/mnemosyne-validate.1
     dependencies:
       - formula: hf
 
