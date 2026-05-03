@@ -24,6 +24,8 @@ jobs:
         shell: bash
         env:
           CODEBERG_MIRROR_SSH_KEY: ${{ secrets.CODEBERG_MIRROR_SSH_KEY }}
+          # Pin Codeberg's verified SSH host keys in this secret.
+          CODEBERG_KNOWN_HOSTS: ${{ secrets.CODEBERG_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
 
@@ -32,10 +34,16 @@ jobs:
             exit 1
           fi
 
+          if [ -z "${CODEBERG_KNOWN_HOSTS}" ]; then
+            echo "CODEBERG_KNOWN_HOSTS is not configured."
+            exit 1
+          fi
+
           install -m 700 -d ~/.ssh
           printf '%s\n' "${CODEBERG_MIRROR_SSH_KEY}" > ~/.ssh/codeberg_mirror
           chmod 600 ~/.ssh/codeberg_mirror
-          ssh-keyscan codeberg.org >> ~/.ssh/known_hosts
+          printf '%s\n' "${CODEBERG_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
 
       - name: Push to Codeberg
         shell: bash
