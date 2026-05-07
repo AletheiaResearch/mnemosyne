@@ -428,6 +428,9 @@ func TestExtractDiscoversRenamedColumns(t *testing.T) {
 func TestNormalizeAgentType(t *testing.T) {
 	t.Parallel()
 	cases := []struct{ in, want string }{
+		{"Amp", "amp"},
+		{"amp-cli", "amp"},
+		{"AMPCODE", "amp"},
 		{"Claude Code", "claudecode"},
 		{"claude-code-cli", "claudecode"},
 		{"anthropic", "claudecode"},

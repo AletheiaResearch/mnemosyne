@@ -9,6 +9,7 @@ func TestRegistryReturnsAllSourcesWithUniqueNames(t *testing.T) {
 
 	sources := Registry()
 	want := []string{
+		"amp",
 		"claudecode",
 		"codex",
 		"cursor",

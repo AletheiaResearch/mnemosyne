@@ -13,6 +13,7 @@ import (
 
 	"github.com/AletheiaResearch/mnemosyne/internal/schema"
 	"github.com/AletheiaResearch/mnemosyne/internal/source"
+	"github.com/AletheiaResearch/mnemosyne/internal/source/amp"
 	"github.com/AletheiaResearch/mnemosyne/internal/source/claudecode"
 	"github.com/AletheiaResearch/mnemosyne/internal/source/codex"
 	"github.com/AletheiaResearch/mnemosyne/internal/source/cursor"
@@ -86,6 +87,7 @@ func (s *Source) Name() string {
 
 func defaultLookups() map[string]source.SessionLookup {
 	return map[string]source.SessionLookup{
+		"amp":        amp.New(""),
 		"claudecode": claudecode.New(""),
 		"codex":      codex.New("", ""),
 		"cursor":     cursor.New(""),
@@ -577,6 +579,8 @@ func normalizeAgentType(agentType string) string {
 	}, agentType)
 
 	switch key {
+	case "amp", "ampcli", "ampcode", "ampcodecli":
+		return "amp"
 	case "claude", "claudecode", "claudecodecli", "anthropic":
 		return "claudecode"
 	case "gemini", "geminicli":

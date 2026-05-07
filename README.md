@@ -6,7 +6,7 @@ Mirror: [Codeberg](https://codeberg.org/AletheiaResearch/mnemosyne)
 
 Export coding-assistant conversation histories to a unified, anonymized dataset.
 
-Supports Claude Code, Codex, Cursor, Gemini CLI, Kimi CLI, OpenClaw, opencode, and Conductor-style orchestrators. Output stays local unless you explicitly publish.
+Supports Amp, Claude Code, Codex, Cursor, Gemini CLI, Kimi CLI, OpenClaw, opencode, and Conductor-style orchestrators. Output stays local unless you explicitly publish.
 
 ## Install
 
