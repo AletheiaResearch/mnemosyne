@@ -1,0 +1,111 @@
+{
+  "v": 172,
+  "id": "T-019e01be-1ae4-7119-b94f-a1a75696ce01",
+  "env": {
+    "initial": {
+      "tags": ["model:claude-opus-4-7"],
+      "trees": [
+        {
+          "uri": "file:///workspace/example",
+          "displayName": "example"
+        }
+      ],
+      "platform": {
+        "os": "darwin",
+        "client": "CLI",
+        "osVersion": "0.0.0",
+        "clientType": "cli",
+        "webBrowser": false,
+        "clientVersion": "0.0.0-fixture",
+        "installationID": "00000000-0000-0000-0000-000000000000",
+        "cpuArchitecture": "arm64",
+        "deviceFingerprint": "v1:fixture"
+      }
+    }
+  },
+  "meta": {
+    "deleted": false,
+    "createdOnServer": false,
+    "lastUserMessageAt": "2026-05-07T09:22:19.202Z",
+    "workspaceID": null,
+    "projectID": null,
+    "visibility": "private",
+    "sharedGroupIDs": [],
+    "agentMode": "smart",
+    "usesDtw": false
+  },
+  "title": "Using Codex subscription access",
+  "created": 1778145696817,
+  "messages": [
+    {
+      "meta": {"sentAt": 1778145719905},
+      "role": "user",
+      "content": [{"text": "How can I let you use my Codex sub?", "type": "text"}],
+      "agentMode": "smart",
+      "messageId": 0,
+      "userState": {"currentlyVisibleFiles": []}
+    },
+    {
+      "role": "assistant",
+      "state": {"type": "complete", "stopReason": "end_turn"},
+      "usage": {
+        "model": "claude-opus-4-7",
+        "timestamp": "2026-05-07T09:22:06.852Z",
+        "inputTokens": 6,
+        "outputTokens": 363,
+        "cacheReadInputTokens": 16368,
+        "cacheCreationInputTokens": 11836
+      },
+      "content": [
+        {
+          "type": "thinking",
+          "provider": "anthropic",
+          "thinking": "The user wants to configure Amp to use their OpenAI Codex subscription.",
+          "finalTime": 1778145722889,
+          "startTime": 1778145721379
+        },
+        {
+          "text": "Amp doesn't currently support routing through a user's ChatGPT/Codex subscription.",
+          "type": "text",
+          "finalTime": 1778145726839,
+          "startTime": 1778145722889
+        }
+      ],
+      "messageId": 1,
+      "turnElapsedMs": 6946
+    },
+    {
+      "meta": {"sentAt": 1778145739202},
+      "role": "user",
+      "content": [{"text": "what model do you use?", "type": "text"}],
+      "agentMode": "smart",
+      "messageId": 2
+    },
+    {
+      "role": "assistant",
+      "state": {"type": "complete", "stopReason": "end_turn"},
+      "usage": {
+        "model": "claude-opus-4-7",
+        "timestamp": "2026-05-07T09:22:22.043Z",
+        "inputTokens": 6,
+        "outputTokens": 80,
+        "cacheReadInputTokens": 16368,
+        "cacheCreationInputTokens": 12211
+      },
+      "content": [
+        {
+          "text": "I'm Claude (made by Anthropic), running as the agent inside Amp.",
+          "type": "text",
+          "finalTime": 1778145742043,
+          "startTime": 1778145740470
+        }
+      ],
+      "messageId": 3,
+      "turnElapsedMs": 2841
+    }
+  ],
+  "agentMode": "smart",
+  "nextMessageId": 4,
+  "creatorUserID": "user_FIXTURE",
+  "updatedAt": "2026-05-07T09:22:19.202Z"
+}

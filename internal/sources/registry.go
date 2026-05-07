@@ -2,6 +2,7 @@ package sources
 
 import (
 	"github.com/AletheiaResearch/mnemosyne/internal/source"
+	"github.com/AletheiaResearch/mnemosyne/internal/source/amp"
 	"github.com/AletheiaResearch/mnemosyne/internal/source/claudecode"
 	"github.com/AletheiaResearch/mnemosyne/internal/source/codex"
 	"github.com/AletheiaResearch/mnemosyne/internal/source/cursor"
@@ -15,6 +16,7 @@ import (
 
 func Registry() []source.Source {
 	return []source.Source{
+		amp.New(""),
 		claudecode.New(""),
 		codex.New("", ""),
 		cursor.New(""),
