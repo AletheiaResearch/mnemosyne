@@ -62,7 +62,7 @@ func TestDiscoverGroupsBySubdirAndDefault(t *testing.T) {
 		t.Fatalf("personal bucket records = %d, want 1", got)
 	}
 	if got := byID["work"].EstimatedRecords; got != 2 {
-		t.Fatalf("work bucket records = %d, want 2 (root file + nested file)", got)
+		t.Fatalf("work bucket records = %d, want 2 (work/T-003.json + work/nested/T-004.json collapsed to top segment)", got)
 	}
 	for id, g := range byID {
 		if g.EstimatedBytes <= 0 {
@@ -118,7 +118,7 @@ func TestExtractParsesCanonicalTrace(t *testing.T) {
 	if rec.Model != "claude-opus-4-7" {
 		t.Fatalf("model = %q", rec.Model)
 	}
-	if rec.WorkingDir != "/Users/quantumly/Documents/Development" {
+	if rec.WorkingDir != "/workspace/example" {
 		t.Fatalf("working_dir = %q", rec.WorkingDir)
 	}
 	if len(rec.Turns) != 4 {
@@ -168,8 +168,13 @@ func TestExtractParsesCanonicalTrace(t *testing.T) {
 	if ext["visibility"] != "private" {
 		t.Fatalf("visibility = %v", ext["visibility"])
 	}
-	if ext["client_version"] != "0.0.1778143766-gf8b20a" {
+	if ext["client_version"] != "0.0.0-fixture" {
 		t.Fatalf("client_version = %v", ext["client_version"])
+	}
+	for _, key := range []string{"creator_user_id", "installation_id", "device_fingerprint"} {
+		if _, present := ext[key]; present {
+			t.Fatalf("extensions[amp][%q] present; identity-bearing fields must be dropped", key)
+		}
 	}
 
 	if err := schema.ValidateRecord(rec); err != nil {
@@ -249,21 +254,50 @@ func TestExtractSkipsBadFiles(t *testing.T) {
 func TestLookupSessionByID(t *testing.T) {
 	t.Parallel()
 
-	root := t.TempDir()
-	stageFixture(t, root, "default/trace.json")
-	src := New(root)
+	t.Run("renamed_export_falls_back", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		stageFixture(t, root, "default/trace.json")
+		src := New(root)
 
-	rec, ok, err := src.LookupSession(t.Context(), "T-019e01be-1ae4-7119-b94f-a1a75696ce01")
-	if err != nil || !ok {
-		t.Fatalf("lookup ok=%v err=%v", ok, err)
-	}
-	if rec.RecordID != "T-019e01be-1ae4-7119-b94f-a1a75696ce01" {
-		t.Fatalf("record_id = %q", rec.RecordID)
-	}
+		rec, ok, err := src.LookupSession(t.Context(), "T-019e01be-1ae4-7119-b94f-a1a75696ce01")
+		if err != nil || !ok {
+			t.Fatalf("lookup ok=%v err=%v", ok, err)
+		}
+		if rec.RecordID != "T-019e01be-1ae4-7119-b94f-a1a75696ce01" {
+			t.Fatalf("record_id = %q", rec.RecordID)
+		}
+	})
 
-	if _, ok, err := src.LookupSession(t.Context(), "T-missing"); err != nil || ok {
-		t.Fatalf("expected miss, got ok=%v err=%v", ok, err)
-	}
+	t.Run("canonical_filename_matches", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		// Drop a decoy with the wrong filename plus the canonical
+		// T-<id>.json so we can confirm the canonical file is the
+		// one returned.
+		stageFixture(t, root, "default/trace.json")
+		stageFixture(t, root, "default/T-019e01be-1ae4-7119-b94f-a1a75696ce01.json")
+		src := New(root)
+
+		rec, ok, err := src.LookupSession(t.Context(), "T-019e01be-1ae4-7119-b94f-a1a75696ce01")
+		if err != nil || !ok {
+			t.Fatalf("lookup ok=%v err=%v", ok, err)
+		}
+		if rec.Provenance == nil || filepath.Base(rec.Provenance.SourcePath) != "T-019e01be-1ae4-7119-b94f-a1a75696ce01.json" {
+			t.Fatalf("expected canonical filename via fast path, got provenance=%+v", rec.Provenance)
+		}
+	})
+
+	t.Run("missing_id", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		stageFixture(t, root, "default/trace.json")
+		src := New(root)
+
+		if _, ok, err := src.LookupSession(t.Context(), "T-missing"); err != nil || ok {
+			t.Fatalf("expected miss, got ok=%v err=%v", ok, err)
+		}
+	})
 }
 
 func TestNameAndDefaultRoot(t *testing.T) {

@@ -6,20 +6,20 @@
       "tags": ["model:claude-opus-4-7"],
       "trees": [
         {
-          "uri": "file:///Users/quantumly/Documents/Development",
-          "displayName": "Development"
+          "uri": "file:///workspace/example",
+          "displayName": "example"
         }
       ],
       "platform": {
         "os": "darwin",
         "client": "CLI",
-        "osVersion": "26.2",
+        "osVersion": "0.0.0",
         "clientType": "cli",
         "webBrowser": false,
-        "clientVersion": "0.0.1778143766-gf8b20a",
-        "installationID": "93c6bba0-b684-42d7-a1dd-cccdaaa40f7c",
+        "clientVersion": "0.0.0-fixture",
+        "installationID": "00000000-0000-0000-0000-000000000000",
         "cpuArchitecture": "arm64",
-        "deviceFingerprint": "v1:fp_4f80ef99ac3a7a8c2d8ec736d653642e41e58cabe664ef987a4f3831772cc393"
+        "deviceFingerprint": "v1:fixture"
       }
     }
   },
@@ -106,6 +106,6 @@
   ],
   "agentMode": "smart",
   "nextMessageId": 4,
-  "creatorUserID": "user_01KR0V9JHSEHH0BNCTRYM21HAF",
+  "creatorUserID": "user_FIXTURE",
   "updatedAt": "2026-05-07T09:22:19.202Z"
 }

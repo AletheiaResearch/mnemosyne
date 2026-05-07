@@ -131,8 +131,12 @@ func (s *Source) Extract(_ context.Context, grouping source.Grouping, extractCtx
 }
 
 // LookupSession resolves a trace by its Amp thread ID. The orchestrator
-// uses this when its SQLite mirror references an Amp session and we want
-// to splice the richer trace content back in.
+// calls this once per session, so a naive "parse every file every time"
+// scan is O(sessions × traces). We exploit the fact that exported Amp
+// traces are conventionally named after their thread ID (e.g.
+// "T-<uuid>.json"): we scan filenames first and only parse files whose
+// basename matches, falling back to a full content scan when nothing
+// does so renamed or repackaged exports still resolve.
 func (s *Source) LookupSession(_ context.Context, sessionID string) (schema.Record, bool, error) {
 	if s.root == "" || !source.DirExists(s.root) {
 		return schema.Record{}, false, nil
@@ -141,7 +145,23 @@ func (s *Source) LookupSession(_ context.Context, sessionID string) (schema.Reco
 	if err != nil {
 		return schema.Record{}, false, err
 	}
+	target := sessionID + ".json"
 	for _, path := range files {
+		if filepath.Base(path) != target {
+			continue
+		}
+		record, ok, err := s.parseTrace(path, source.ExtractionContext{})
+		if err != nil || !ok {
+			continue
+		}
+		if record.RecordID == sessionID {
+			return record, true, nil
+		}
+	}
+	for _, path := range files {
+		if filepath.Base(path) == target {
+			continue // already parsed above
+		}
 		record, ok, err := s.parseTrace(path, source.ExtractionContext{})
 		if err != nil || !ok {
 			continue
@@ -349,13 +369,16 @@ func workingDirFromTrace(trace map[string]any) string {
 // fit anywhere on the canonical Record. We pass them through verbatim
 // rather than inventing typed surrogates so future Amp additions
 // (visibility tiers, agent modes, ...) carry over without code changes.
+//
+// Identity-bearing fields (creatorUserID, installationID, deviceFingerprint)
+// are deliberately *not* surfaced: mnemosyne's whole point is producing an
+// anonymised dataset, and stable Amp user/device IDs would defeat that
+// even before redact.Pipeline runs. Operators who want them back can
+// post-process the source trace files directly.
 func traceExtensions(trace map[string]any) map[string]any {
 	out := make(map[string]any)
 	if v := source.ExtractString(trace, "agentMode"); v != "" {
 		out["agent_mode"] = v
-	}
-	if v := source.ExtractString(trace, "creatorUserID"); v != "" {
-		out["creator_user_id"] = v
 	}
 	if meta := source.ExtractMap(trace, "meta"); meta != nil {
 		if v := source.ExtractString(meta, "workspaceID"); v != "" {
