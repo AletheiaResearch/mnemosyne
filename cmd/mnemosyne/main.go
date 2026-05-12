@@ -2,13 +2,15 @@ package main
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"os"
 
 	"github.com/AletheiaResearch/mnemosyne/internal/cli"
 )
 
 func main() {
 	if err := cli.Execute(context.Background()); err != nil {
-		log.Fatal(err)
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 }
