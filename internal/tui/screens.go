@@ -408,11 +408,8 @@ func (s *formScreen) View() string {
 
 	var output string
 	if s.err != "" {
-		body := strings.TrimSpace(s.output)
-		if body == "" {
-			body = s.err
-		}
-		output = common.Panel("Error", common.ErrorStyle.Render(body), s.contentWidth())
+		s.layoutOutput(header, fieldsPanel, status)
+		output = common.Panel("Error", s.outputVP.View(), s.contentWidth())
 	} else if strings.TrimSpace(s.output) != "" {
 		s.layoutOutput(header, fieldsPanel, status)
 		output = common.Panel("Output", s.outputVP.View(), s.contentWidth())
@@ -521,8 +518,22 @@ func (s *formScreen) refreshOutput() {
 	} else {
 		s.outputVP.Width = w
 	}
-	s.outputVP.SetContent(s.output)
+	s.outputVP.SetContent(s.viewportContent())
 	s.outputVP.GotoTop()
+}
+
+// viewportContent picks what the viewport should display for the current
+// command result and applies the error styling when relevant, so View can
+// route both success and failure through the same scrollable viewport.
+func (s *formScreen) viewportContent() string {
+	if s.err == "" {
+		return s.output
+	}
+	body := strings.TrimSpace(s.output)
+	if body == "" {
+		body = s.err
+	}
+	return common.ErrorStyle.Render(body)
 }
 
 func (s *formScreen) layoutOutput(header, fields, status string) {

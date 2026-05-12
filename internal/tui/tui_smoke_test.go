@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -61,17 +62,25 @@ func TestSmokeAppInitialView(t *testing.T) {
 // useless `exit status 1`.
 func TestFormScreenErrorPanelPrefersOutput(t *testing.T) {
 	configPath := t.TempDir() + "/settings.json"
-	base := newScreen(screenAttest, configPath)
-	form, ok := base.(*formScreen)
-	if !ok {
-		t.Fatalf("expected *formScreen, got %T", base)
+
+	newForm := func(t *testing.T) *formScreen {
+		t.Helper()
+		base := newScreen(screenAttest, configPath)
+		form, ok := base.(*formScreen)
+		if !ok {
+			t.Fatalf("expected *formScreen, got %T", base)
+		}
+		form.SetSize(120, 30)
+		return form
 	}
-	form.SetSize(120, 30)
+
+	deliver := func(form *formScreen, output string, err error) string {
+		updated, _ := form.Update(commandResultMsg{output: output, err: err})
+		return updated.View()
+	}
 
 	t.Run("captured output wins over exit status", func(t *testing.T) {
-		form.err = "exit status 1"
-		form.output = "identity attestation must include every word"
-		view := form.View()
+		view := deliver(newForm(t), "identity attestation must include every word", errors.New("exit status 1"))
 		if !strings.Contains(view, "identity attestation must include every word") {
 			t.Fatalf("expected captured output in view, got: %s", view)
 		}
@@ -81,9 +90,7 @@ func TestFormScreenErrorPanelPrefersOutput(t *testing.T) {
 	})
 
 	t.Run("falls back to exit status when output empty", func(t *testing.T) {
-		form.err = "exit status 1"
-		form.output = "   "
-		view := form.View()
+		view := deliver(newForm(t), "   ", errors.New("exit status 1"))
 		if !strings.Contains(view, "exit status 1") {
 			t.Fatalf("expected fallback to exit-status string, got: %s", view)
 		}
