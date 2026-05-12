@@ -408,7 +408,11 @@ func (s *formScreen) View() string {
 
 	var output string
 	if s.err != "" {
-		output = common.Panel("Error", common.ErrorStyle.Render(s.err), s.contentWidth())
+		body := strings.TrimSpace(s.output)
+		if body == "" {
+			body = s.err
+		}
+		output = common.Panel("Error", common.ErrorStyle.Render(body), s.contentWidth())
 	} else if strings.TrimSpace(s.output) != "" {
 		s.layoutOutput(header, fieldsPanel, status)
 		output = common.Panel("Output", s.outputVP.View(), s.contentWidth())
