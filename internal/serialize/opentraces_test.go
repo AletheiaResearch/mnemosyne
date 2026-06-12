@@ -155,6 +155,17 @@ func TestOpenTracesFullRecord(t *testing.T) {
 	if mnemosyne["provenance"] != record.Provenance {
 		t.Errorf("Metadata[mnemosyne].provenance = %v, want record provenance", mnemosyne["provenance"])
 	}
+	sidecar, ok := mnemosyne["turns"].(map[string]any)
+	if !ok {
+		t.Fatalf("Metadata[mnemosyne].turns = %v, want sidecar for attachment turn", mnemosyne["turns"])
+	}
+	entry, ok := sidecar["2"].(map[string]any)
+	if !ok {
+		t.Fatalf("sidecar = %v, want entry keyed by step_index 2", sidecar)
+	}
+	if attachments, ok := entry["attachments"].([]schema.ContentBlock); !ok || len(attachments) != 1 || attachments[0].MediaType != "image/png" {
+		t.Errorf("sidecar attachments = %v, want the turn's content blocks", entry["attachments"])
+	}
 }
 
 func TestOpenTracesMinimalRecord(t *testing.T) {
@@ -343,6 +354,51 @@ func TestOpenTracesDeterminism(t *testing.T) {
 	mutated.Turns[0].Text = "changed"
 	if mutatedPayload := serializeOpenTraces(t, mutated); mutatedPayload.TraceID != payload.TraceID {
 		t.Errorf("TraceID changed with content: %q vs %q", mutatedPayload.TraceID, payload.TraceID)
+	}
+}
+
+func TestOpenTracesTurnSidecar(t *testing.T) {
+	attachments := []schema.ContentBlock{{Type: "image", MediaType: "image/jpeg", Data: "ffd8"}}
+	extensions := map[string]any{"tool_events": []any{"event"}}
+	payload := serializeOpenTraces(t, sampleRecord([]schema.Turn{
+		{Role: "user", Text: "look at this", Attachments: attachments},
+		{Role: "assistant", Text: "looking", Extensions: extensions},
+		{Role: "user", Text: "plain"},
+	}))
+
+	if payload.Steps[0].Content != "look at this" {
+		t.Errorf("Steps[0].Content = %q, want turn text kept verbatim alongside attachments", payload.Steps[0].Content)
+	}
+
+	mnemosyne := payload.Metadata["mnemosyne"].(map[string]any)
+	sidecar, ok := mnemosyne["turns"].(map[string]any)
+	if !ok {
+		t.Fatalf("Metadata[mnemosyne].turns = %v, want sidecar", mnemosyne["turns"])
+	}
+	entry, ok := sidecar["0"].(map[string]any)
+	if !ok {
+		t.Fatalf("sidecar = %v, want entry for step 0", sidecar)
+	}
+	if got, ok := entry["attachments"].([]schema.ContentBlock); !ok || len(got) != 1 || got[0].Data != "ffd8" {
+		t.Errorf("sidecar[0].attachments = %v, want turn attachments", entry["attachments"])
+	}
+	entry, ok = sidecar["1"].(map[string]any)
+	if !ok {
+		t.Fatalf("sidecar = %v, want entry for step 1", sidecar)
+	}
+	if got, ok := entry["extensions"].(map[string]any); !ok || got["tool_events"] == nil {
+		t.Errorf("sidecar[1].extensions = %v, want turn extensions", entry["extensions"])
+	}
+	if _, ok := sidecar["2"]; ok {
+		t.Errorf("sidecar = %v, want no entry for plain turn", sidecar)
+	}
+}
+
+func TestOpenTracesNoTurnSidecarForPlainTurns(t *testing.T) {
+	payload := serializeOpenTraces(t, sampleRecord([]schema.Turn{{Role: "user", Text: "hi"}}))
+	mnemosyne := payload.Metadata["mnemosyne"].(map[string]any)
+	if _, ok := mnemosyne["turns"]; ok {
+		t.Errorf("Metadata[mnemosyne] = %v, want no turns sidecar for plain record", mnemosyne)
 	}
 }
 

@@ -1,6 +1,8 @@
 package serialize
 
 import (
+	"strconv"
+
 	"github.com/google/uuid"
 
 	"github.com/AletheiaResearch/mnemosyne/internal/schema"
@@ -221,5 +223,29 @@ func openTracesMetadata(record schema.Record) map[string]any {
 	if record.Provenance != nil {
 		mnemosyne["provenance"] = record.Provenance
 	}
+	if turns := openTracesTurnSidecar(record.Turns); len(turns) > 0 {
+		mnemosyne["turns"] = turns
+	}
 	return map[string]any{"mnemosyne": mnemosyne}
+}
+
+// openTracesTurnSidecar preserves per-turn attachments and extensions,
+// which have no Step slot in OpenTraces v0.7.0. Entries are keyed by the
+// step_index of the step the turn became, so multimodal prompts stay
+// reconstructable from the export.
+func openTracesTurnSidecar(turns []schema.Turn) map[string]any {
+	sidecar := map[string]any{}
+	for i, turn := range turns {
+		extra := map[string]any{}
+		if len(turn.Attachments) > 0 {
+			extra["attachments"] = turn.Attachments
+		}
+		if len(turn.Extensions) > 0 {
+			extra["extensions"] = turn.Extensions
+		}
+		if len(extra) > 0 {
+			sidecar[strconv.Itoa(i)] = extra
+		}
+	}
+	return sidecar
 }
