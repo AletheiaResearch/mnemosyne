@@ -6,6 +6,7 @@ require (
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
+	github.com/google/uuid v1.6.0
 	github.com/mattn/go-isatty v0.0.21
 	github.com/nikolalohinski/gonja/v2 v2.8.0
 	github.com/spf13/cobra v1.10.2
@@ -76,7 +77,6 @@ require (
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/pprof v0.0.0-20260115054156-294ebfa9ad83 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.7 // indirect
 	github.com/googleapis/gax-go/v2 v2.16.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
