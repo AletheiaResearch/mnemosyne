@@ -279,6 +279,34 @@ func TestOpenTracesObservationFallbacks(t *testing.T) {
 			wantError:   "error",
 		},
 		{
+			name:        "failed status without output",
+			call:        schema.ToolCall{Tool: "t", Status: "failed"},
+			wantPresent: true,
+			wantError:   "failed",
+		},
+		{
+			name:        "failed status routes text into error",
+			call:        schema.ToolCall{Tool: "t", Output: &schema.ToolOutput{Text: "exit 1"}, Status: "failed"},
+			wantPresent: true,
+			wantError:   "exit 1",
+		},
+		{
+			name:        "failure statuses match case-insensitively",
+			call:        schema.ToolCall{Tool: "t", Status: "Failed"},
+			wantPresent: true,
+			wantError:   "Failed",
+		},
+		{
+			name:        "completed status stays a content observation",
+			call:        schema.ToolCall{Tool: "t", Output: &schema.ToolOutput{Text: "done"}, Status: "completed"},
+			wantPresent: true,
+			wantContent: "done",
+		},
+		{
+			name: "running status without output no observation",
+			call: schema.ToolCall{Tool: "t", Status: "running"},
+		},
+		{
 			name: "no output no observation",
 			call: schema.ToolCall{Tool: "t", Status: "success"},
 		},

@@ -2,6 +2,7 @@ package serialize
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -191,9 +192,9 @@ func openTracesRole(role string) string {
 
 func openTracesObservationFor(id string, call schema.ToolCall) (openTracesObservation, bool) {
 	text := toolOutputText(call.Output)
-	if call.Status == "error" {
+	if openTracesCallFailed(call.Status) {
 		if text == "" {
-			text = "error"
+			text = call.Status
 		}
 		return openTracesObservation{SourceCallID: id, Error: text}, true
 	}
@@ -201,6 +202,19 @@ func openTracesObservationFor(id string, call schema.ToolCall) (openTracesObserv
 		return openTracesObservation{}, false
 	}
 	return openTracesObservation{SourceCallID: id, Content: text}, true
+}
+
+// openTracesCallFailed reports whether a tool call's status marks a
+// failure. Sources that derive statuses emit "error", but pass-through
+// sources (cursor, orchestrator, gemini, opencode, supplied) preserve
+// native vocabulary such as "failed". Cancellation and in-progress
+// statuses are deliberately not failures.
+func openTracesCallFailed(status string) bool {
+	switch strings.ToLower(status) {
+	case "error", "errored", "failed", "failure":
+		return true
+	}
+	return false
 }
 
 // openTracesMetadata preserves the canonical fields that have no OpenTraces
