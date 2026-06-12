@@ -11,6 +11,11 @@ import (
 	"github.com/AletheiaResearch/mnemosyne/internal/schema"
 )
 
+// goldenRec1TraceID is the UUIDv5 derived from record ID "rec-1" under the
+// serializer's namespace. Pinned as a literal so a namespace change breaks
+// the test instead of silently changing exported trace IDs.
+const goldenRec1TraceID = "60addb88-8c85-500b-88be-aae1e3127757"
+
 func serializeOpenTraces(t *testing.T, record schema.Record) openTracesRecord {
 	t.Helper()
 	out, err := OpenTraces{}.Serialize(record)
@@ -22,6 +27,33 @@ func serializeOpenTraces(t *testing.T, record schema.Record) openTracesRecord {
 		t.Fatalf("unexpected payload type %T", out)
 	}
 	return payload
+}
+
+// wireRecord round-trips the payload through JSON so assertions exercise the
+// wire shape consumers see rather than in-memory Go types.
+func wireRecord(t *testing.T, payload openTracesRecord) map[string]any {
+	t.Helper()
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(data, &wire); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	return wire
+}
+
+func dig(t *testing.T, value any, path ...string) any {
+	t.Helper()
+	for i, key := range path {
+		object, ok := value.(map[string]any)
+		if !ok {
+			t.Fatalf("wire value at %q is %T, want object", strings.Join(path[:i], "."), value)
+		}
+		value = object[key]
+	}
+	return value
 }
 
 func TestOpenTracesFullRecord(t *testing.T) {
@@ -64,9 +96,8 @@ func TestOpenTracesFullRecord(t *testing.T) {
 	if payload.SchemaVersion != "0.7.0" {
 		t.Errorf("SchemaVersion = %q, want %q", payload.SchemaVersion, "0.7.0")
 	}
-	wantTraceID := uuid.NewSHA1(openTracesNamespace, []byte("rec-1")).String()
-	if payload.TraceID != wantTraceID {
-		t.Errorf("TraceID = %q, want %q", payload.TraceID, wantTraceID)
+	if payload.TraceID != goldenRec1TraceID {
+		t.Errorf("TraceID = %q, want %q", payload.TraceID, goldenRec1TraceID)
 	}
 	if payload.SessionID != "session-abc" {
 		t.Errorf("SessionID = %q, want %q", payload.SessionID, "session-abc")
@@ -142,29 +173,29 @@ func TestOpenTracesFullRecord(t *testing.T) {
 		t.Errorf("Metrics = %+v, want %+v", payload.Metrics, wantMetrics)
 	}
 
-	mnemosyne, ok := payload.Metadata["mnemosyne"].(map[string]any)
-	if !ok {
-		t.Fatalf("Metadata = %v, want mnemosyne key", payload.Metadata)
+	wire := wireRecord(t, payload)
+	for key, want := range map[string]any{
+		"record_id":   "rec-1",
+		"origin":      "claudecode",
+		"grouping":    "claudecode:proj",
+		"working_dir": "/home/user/proj",
+	} {
+		if got := dig(t, wire, "metadata", "mnemosyne", key); got != want {
+			t.Errorf("metadata.mnemosyne.%s = %v, want %v", key, got, want)
+		}
 	}
-	if mnemosyne["record_id"] != "rec-1" || mnemosyne["origin"] != "claudecode" || mnemosyne["grouping"] != "claudecode:proj" || mnemosyne["working_dir"] != "/home/user/proj" {
-		t.Errorf("Metadata[mnemosyne] = %v", mnemosyne)
+	if got := dig(t, wire, "metadata", "mnemosyne", "extensions", "claudecode", "version"); got != "2.0" {
+		t.Errorf("metadata.mnemosyne.extensions.claudecode.version = %v, want %q", got, "2.0")
 	}
-	if _, ok := mnemosyne["extensions"]; !ok {
-		t.Errorf("Metadata[mnemosyne] missing extensions: %v", mnemosyne)
+	if got := dig(t, wire, "metadata", "mnemosyne", "provenance", "source_id"); got != "session-abc" {
+		t.Errorf("metadata.mnemosyne.provenance.source_id = %v, want %q", got, "session-abc")
 	}
-	if mnemosyne["provenance"] != record.Provenance {
-		t.Errorf("Metadata[mnemosyne].provenance = %v, want record provenance", mnemosyne["provenance"])
+	attachments, ok := dig(t, wire, "metadata", "mnemosyne", "turns", "2", "attachments").([]any)
+	if !ok || len(attachments) != 1 {
+		t.Fatalf("metadata.mnemosyne.turns.2.attachments = %v, want one block", attachments)
 	}
-	sidecar, ok := mnemosyne["turns"].(map[string]any)
-	if !ok {
-		t.Fatalf("Metadata[mnemosyne].turns = %v, want sidecar for attachment turn", mnemosyne["turns"])
-	}
-	entry, ok := sidecar["2"].(map[string]any)
-	if !ok {
-		t.Fatalf("sidecar = %v, want entry keyed by step_index 2", sidecar)
-	}
-	if attachments, ok := entry["attachments"].([]schema.ContentBlock); !ok || len(attachments) != 1 || attachments[0].MediaType != "image/png" {
-		t.Errorf("sidecar attachments = %v, want the turn's content blocks", entry["attachments"])
+	if block, ok := attachments[0].(map[string]any); !ok || block["media_type"] != "image/png" {
+		t.Errorf("attachment block = %v, want media_type image/png", attachments[0])
 	}
 }
 
@@ -181,14 +212,7 @@ func TestOpenTracesMinimalRecord(t *testing.T) {
 		t.Errorf("Agent.Name = %q, want %q", payload.Agent.Name, "unknown")
 	}
 
-	data, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	var wire map[string]any
-	if err := json.Unmarshal(data, &wire); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
+	wire := wireRecord(t, payload)
 	for _, absent := range []string{"task", "environment", "timestamp_start", "timestamp_end", "content_hash"} {
 		if _, ok := wire[absent]; ok {
 			t.Errorf("wire JSON unexpectedly contains %q", absent)
@@ -307,6 +331,14 @@ func TestOpenTracesObservationFallbacks(t *testing.T) {
 			call: schema.ToolCall{Tool: "t", Status: "running"},
 		},
 		{
+			name: "cancelled status without output no observation",
+			call: schema.ToolCall{Tool: "t", Status: "cancelled"},
+		},
+		{
+			name: "in-progress status without output no observation",
+			call: schema.ToolCall{Tool: "t", Status: "in-progress"},
+		},
+		{
 			name: "no output no observation",
 			call: schema.ToolCall{Tool: "t", Status: "success"},
 		},
@@ -369,6 +401,9 @@ func TestOpenTracesDeterminism(t *testing.T) {
 	}
 
 	payload := serializeOpenTraces(t, record)
+	if payload.TraceID != goldenRec1TraceID {
+		t.Errorf("TraceID = %q, want golden %q", payload.TraceID, goldenRec1TraceID)
+	}
 	parsed, err := uuid.Parse(payload.TraceID)
 	if err != nil {
 		t.Fatalf("TraceID %q is not a UUID: %v", payload.TraceID, err)
@@ -398,24 +433,20 @@ func TestOpenTracesTurnSidecar(t *testing.T) {
 		t.Errorf("Steps[0].Content = %q, want turn text kept verbatim alongside attachments", payload.Steps[0].Content)
 	}
 
-	mnemosyne := payload.Metadata["mnemosyne"].(map[string]any)
-	sidecar, ok := mnemosyne["turns"].(map[string]any)
+	wire := wireRecord(t, payload)
+	got, ok := dig(t, wire, "metadata", "mnemosyne", "turns", "0", "attachments").([]any)
+	if !ok || len(got) != 1 {
+		t.Fatalf("metadata.mnemosyne.turns.0.attachments = %v, want one block", got)
+	}
+	if block, ok := got[0].(map[string]any); !ok || block["data"] != "ffd8" {
+		t.Errorf("attachment block = %v, want data ffd8", got[0])
+	}
+	if events := dig(t, wire, "metadata", "mnemosyne", "turns", "1", "extensions", "tool_events"); events == nil {
+		t.Errorf("metadata.mnemosyne.turns.1.extensions = %v, want tool_events", events)
+	}
+	sidecar, ok := dig(t, wire, "metadata", "mnemosyne", "turns").(map[string]any)
 	if !ok {
-		t.Fatalf("Metadata[mnemosyne].turns = %v, want sidecar", mnemosyne["turns"])
-	}
-	entry, ok := sidecar["0"].(map[string]any)
-	if !ok {
-		t.Fatalf("sidecar = %v, want entry for step 0", sidecar)
-	}
-	if got, ok := entry["attachments"].([]schema.ContentBlock); !ok || len(got) != 1 || got[0].Data != "ffd8" {
-		t.Errorf("sidecar[0].attachments = %v, want turn attachments", entry["attachments"])
-	}
-	entry, ok = sidecar["1"].(map[string]any)
-	if !ok {
-		t.Fatalf("sidecar = %v, want entry for step 1", sidecar)
-	}
-	if got, ok := entry["extensions"].(map[string]any); !ok || got["tool_events"] == nil {
-		t.Errorf("sidecar[1].extensions = %v, want turn extensions", entry["extensions"])
+		t.Fatalf("metadata.mnemosyne.turns missing from wire JSON")
 	}
 	if _, ok := sidecar["2"]; ok {
 		t.Errorf("sidecar = %v, want no entry for plain turn", sidecar)
