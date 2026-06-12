@@ -111,8 +111,8 @@ func TestOpenTracesFullRecord(t *testing.T) {
 	if payload.Task == nil || payload.Task.Description != record.Title {
 		t.Errorf("Task = %+v, want description %q", payload.Task, record.Title)
 	}
-	if payload.Agent.Name != "claude-code" || payload.Agent.Model != record.Model {
-		t.Errorf("Agent = %+v, want {claude-code %s}", payload.Agent, record.Model)
+	if payload.Agent.Name != "claude-code" || payload.Agent.Model != "anthropic/claude-sonnet-4-5" {
+		t.Errorf("Agent = %+v, want {claude-code anthropic/claude-sonnet-4-5}", payload.Agent)
 	}
 	if payload.Environment == nil || payload.Environment.VCS.Type != "git" || payload.Environment.VCS.Branch != "main" {
 		t.Errorf("Environment = %+v, want git/main", payload.Environment)
@@ -179,6 +179,7 @@ func TestOpenTracesFullRecord(t *testing.T) {
 		"origin":      "claudecode",
 		"grouping":    "claudecode:proj",
 		"working_dir": "/home/user/proj",
+		"model":       "claude-sonnet-4-5",
 	} {
 		if got := dig(t, wire, "metadata", "mnemosyne", key); got != want {
 			t.Errorf("metadata.mnemosyne.%s = %v, want %v", key, got, want)
@@ -601,5 +602,38 @@ func TestOpenTracesAgentNamePassthrough(t *testing.T) {
 	payload := serializeOpenTraces(t, record)
 	if payload.Agent.Name != "codex" {
 		t.Errorf("Agent.Name = %q, want %q", payload.Agent.Name, "codex")
+	}
+}
+
+func TestOpenTracesModelProviderConvention(t *testing.T) {
+	cases := []struct {
+		model       string
+		want        string
+		wantSidecar bool
+	}{
+		{"claude-sonnet-4-5", "anthropic/claude-sonnet-4-5", true},
+		{"Claude-Opus-4-8", "anthropic/Claude-Opus-4-8", true},
+		{"anthropic/claude-sonnet-4-6", "anthropic/claude-sonnet-4-6", false},
+		{"gpt-5.2-codex", "gpt-5.2-codex", false},
+		{"", "", false},
+	}
+	for _, tc := range cases {
+		record := sampleRecord(nil)
+		record.Model = tc.model
+		payload := serializeOpenTraces(t, record)
+		if payload.Agent.Model != tc.want {
+			t.Errorf("model %q emitted as %q, want %q", tc.model, payload.Agent.Model, tc.want)
+		}
+		mnemosyne, ok := dig(t, wireRecord(t, payload), "metadata", "mnemosyne").(map[string]any)
+		if !ok {
+			t.Fatalf("metadata.mnemosyne missing from wire JSON")
+		}
+		bare, present := mnemosyne["model"]
+		if present != tc.wantSidecar {
+			t.Errorf("model %q: metadata.mnemosyne.model present = %v, want %v", tc.model, present, tc.wantSidecar)
+		}
+		if tc.wantSidecar && bare != tc.model {
+			t.Errorf("model %q: metadata.mnemosyne.model = %v, want bare id", tc.model, bare)
+		}
 	}
 }

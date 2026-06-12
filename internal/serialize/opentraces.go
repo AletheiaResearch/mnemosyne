@@ -152,7 +152,22 @@ func openTracesAgentIdentity(record schema.Record) openTracesAgent {
 	case "":
 		name = "unknown"
 	}
-	return openTracesAgent{Name: name, Model: record.Model}
+	return openTracesAgent{Name: name, Model: openTracesModelID(record.Model)}
+}
+
+// openTracesModelID applies the schema's provider/model convention the same
+// way the reference capture tooling does: bare claude-* ids gain the
+// anthropic/ prefix, everything else passes through verbatim. The bare id
+// stays recoverable via metadata.mnemosyne.
+func openTracesModelID(model string) string {
+	if model == "" || strings.Contains(model, "/") {
+		return model
+	}
+	lower := strings.ToLower(model)
+	if strings.HasPrefix(lower, "claude-") || strings.HasPrefix(lower, "claude_") {
+		return "anthropic/" + model
+	}
+	return model
 }
 
 func openTracesSteps(turns []schema.Turn) []openTracesStep {
@@ -225,13 +240,18 @@ func openTracesCallFailed(status string) bool {
 	return false
 }
 
-// openTracesMetadata preserves the canonical fields that have no OpenTraces
-// slot, plus the inputs of lossy mappings (origin rename, hashed trace_id),
-// so the export stays reversible.
+// openTracesMetadata preserves the record-level canonical fields that have
+// no OpenTraces slot, plus the inputs of lossy mappings (origin rename,
+// hashed trace_id, prefixed model). Tool outputs are intentionally not
+// mirrored here — observations carry their text projection only, and the
+// canonical JSONL stays the source of truth for full tool-call fidelity.
 func openTracesMetadata(record schema.Record) map[string]any {
 	mnemosyne := map[string]any{"record_id": record.RecordID}
 	if record.Origin != "" {
 		mnemosyne["origin"] = record.Origin
+	}
+	if openTracesModelID(record.Model) != record.Model {
+		mnemosyne["model"] = record.Model
 	}
 	if record.Grouping != "" {
 		mnemosyne["grouping"] = record.Grouping
