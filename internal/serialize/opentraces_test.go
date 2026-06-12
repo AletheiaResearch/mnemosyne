@@ -324,6 +324,13 @@ func TestOpenTracesStepWireShape(t *testing.T) {
 	}
 }
 
+func TestOpenTracesEmptyRecordIDRejected(t *testing.T) {
+	_, err := OpenTraces{}.Serialize(schema.Record{Turns: []schema.Turn{{Role: "user", Text: "hi"}}})
+	if err == nil {
+		t.Fatal("Serialize accepted a record without record_id; distinct records would collide on one trace_id")
+	}
+}
+
 func TestOpenTracesEmptyTurnsMarshalsStepsArray(t *testing.T) {
 	payload := serializeOpenTraces(t, schema.Record{RecordID: "rec-empty"})
 	data, err := json.Marshal(payload)

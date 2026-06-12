@@ -1,6 +1,7 @@
 package serialize
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 
@@ -103,6 +104,13 @@ type openTracesMetrics struct {
 }
 
 func (OpenTraces) Serialize(record schema.Record) (any, error) {
+	// trace_id and the session_id fallback both derive from record_id, so a
+	// missing one would silently collide every such record onto the same
+	// trace identity. Transform input is not guaranteed to have passed
+	// schema validation; refuse instead.
+	if record.RecordID == "" {
+		return nil, errors.New("opentraces: record_id is required to derive trace_id")
+	}
 	out := openTracesRecord{
 		SchemaVersion:    openTracesSchemaVersion,
 		SessionID:        openTracesSessionID(record),
