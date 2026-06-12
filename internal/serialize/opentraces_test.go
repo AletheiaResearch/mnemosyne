@@ -455,9 +455,12 @@ func TestOpenTracesTurnSidecar(t *testing.T) {
 
 func TestOpenTracesNoTurnSidecarForPlainTurns(t *testing.T) {
 	payload := serializeOpenTraces(t, sampleRecord([]schema.Turn{{Role: "user", Text: "hi"}}))
-	mnemosyne := payload.Metadata["mnemosyne"].(map[string]any)
+	mnemosyne, ok := dig(t, wireRecord(t, payload), "metadata", "mnemosyne").(map[string]any)
+	if !ok {
+		t.Fatalf("metadata.mnemosyne missing from wire JSON")
+	}
 	if _, ok := mnemosyne["turns"]; ok {
-		t.Errorf("Metadata[mnemosyne] = %v, want no turns sidecar for plain record", mnemosyne)
+		t.Errorf("metadata.mnemosyne = %v, want no turns sidecar for plain record", mnemosyne)
 	}
 }
 
