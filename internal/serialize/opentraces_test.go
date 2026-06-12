@@ -178,12 +178,12 @@ func TestOpenTracesMinimalRecord(t *testing.T) {
 	if err := json.Unmarshal(data, &wire); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	for _, absent := range []string{"task", "environment", "timestamp_start", "timestamp_end"} {
+	for _, absent := range []string{"task", "environment", "timestamp_start", "timestamp_end", "content_hash"} {
 		if _, ok := wire[absent]; ok {
 			t.Errorf("wire JSON unexpectedly contains %q", absent)
 		}
 	}
-	for _, present := range []string{"schema_version", "trace_id", "session_id", "content_hash", "execution_context", "agent", "steps", "metrics", "metadata"} {
+	for _, present := range []string{"schema_version", "trace_id", "session_id", "execution_context", "agent", "steps", "metrics", "metadata"} {
 		if _, ok := wire[present]; !ok {
 			t.Errorf("wire JSON missing %q", present)
 		}
@@ -337,18 +337,11 @@ func TestOpenTracesDeterminism(t *testing.T) {
 	if parsed.Version() != 5 {
 		t.Errorf("TraceID version = %d, want 5", parsed.Version())
 	}
-	if len(payload.ContentHash) != 64 || strings.ToLower(payload.ContentHash) != payload.ContentHash {
-		t.Errorf("ContentHash = %q, want 64 lowercase hex chars", payload.ContentHash)
-	}
 
 	mutated := record
 	mutated.Turns = append([]schema.Turn{}, record.Turns...)
 	mutated.Turns[0].Text = "changed"
-	mutatedPayload := serializeOpenTraces(t, mutated)
-	if mutatedPayload.ContentHash == payload.ContentHash {
-		t.Errorf("ContentHash unchanged after content mutation")
-	}
-	if mutatedPayload.TraceID != payload.TraceID {
+	if mutatedPayload := serializeOpenTraces(t, mutated); mutatedPayload.TraceID != payload.TraceID {
 		t.Errorf("TraceID changed with content: %q vs %q", mutatedPayload.TraceID, payload.TraceID)
 	}
 }

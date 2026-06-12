@@ -1,10 +1,6 @@
 package serialize
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-
 	"github.com/google/uuid"
 
 	"github.com/AletheiaResearch/mnemosyne/internal/schema"
@@ -35,11 +31,17 @@ func (OpenTraces) Description() string {
 // OpenTraces reference models default-fill everything absent, so omitting
 // empty optionals keeps lines lean while staying schema-valid. Fields the
 // schema requires carry no omitempty.
+//
+// content_hash is deliberately not emitted: the reference implementation
+// hashes the fully default-filled model as Python-canonical JSON (sorted
+// keys, ", "/": " separators, ensure_ascii, Python float repr), which Go
+// cannot reproduce byte-for-byte. A divergent hash would defeat the
+// field's cross-contributor dedup purpose, and the reference serializer
+// recomputes it at write time anyway.
 type openTracesRecord struct {
 	SchemaVersion    string                 `json:"schema_version"`
 	TraceID          string                 `json:"trace_id"`
 	SessionID        string                 `json:"session_id"`
-	ContentHash      string                 `json:"content_hash,omitempty"`
 	TimestampStart   string                 `json:"timestamp_start,omitempty"`
 	TimestampEnd     string                 `json:"timestamp_end,omitempty"`
 	ExecutionContext string                 `json:"execution_context,omitempty"`
@@ -119,18 +121,6 @@ func (OpenTraces) Serialize(record schema.Record) (any, error) {
 		TotalInputTokens:  record.Usage.InputTokens,
 		TotalOutputTokens: record.Usage.OutputTokens,
 	}
-
-	// content_hash covers the wire JSON with trace_id still empty and
-	// content_hash absent, mirroring the exclusions the reference
-	// implementation applies. The hashed bytes are Go-canonical JSON, so the
-	// digest will not match the Python reference for identical content;
-	// dedup only needs the hash to be consistent across mnemosyne exports.
-	hashed, err := json.Marshal(out)
-	if err != nil {
-		return nil, err
-	}
-	sum := sha256.Sum256(hashed)
-	out.ContentHash = hex.EncodeToString(sum[:])
 	out.TraceID = uuid.NewSHA1(openTracesNamespace, []byte(record.RecordID)).String()
 	return out, nil
 }
