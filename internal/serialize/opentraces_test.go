@@ -225,6 +225,105 @@ func TestOpenTracesMinimalRecord(t *testing.T) {
 	}
 }
 
+func TestOpenTracesSessionIDFallsBackWhenProvenanceLacksSourceID(t *testing.T) {
+	payload := serializeOpenTraces(t, schema.Record{
+		RecordID:   "rec-p",
+		Provenance: &schema.Provenance{SourcePath: "/tmp/x.jsonl"},
+		Turns:      []schema.Turn{{Role: "user", Text: "hi"}},
+	})
+	if payload.SessionID != "rec-p" {
+		t.Errorf("SessionID = %q, want fallback to record_id when provenance source_id is empty", payload.SessionID)
+	}
+}
+
+// TestOpenTracesStepWireShape pins the JSON field names of steps, tool calls,
+// and observations, which the struct-level assertions cannot see. OpenTraces
+// requires tool_call_id/tool_name on ToolCall and source_call_id on
+// Observation, so a tag typo would emit schema-invalid records silently.
+func TestOpenTracesStepWireShape(t *testing.T) {
+	payload := serializeOpenTraces(t, sampleRecord([]schema.Turn{
+		{Role: "user", Text: "please fix", Timestamp: "2026-01-02T03:04:05Z"},
+		{
+			Role:      "assistant",
+			Text:      "on it",
+			Reasoning: "thinking hard",
+			ToolCalls: []schema.ToolCall{
+				{
+					Tool:   "read_file",
+					Input:  map[string]any{"path": "main.go"},
+					Output: &schema.ToolOutput{Text: "package main"},
+					Status: "success",
+				},
+				{Tool: "run", Status: "error"},
+			},
+		},
+	}))
+
+	wire := wireRecord(t, payload)
+	steps, ok := wire["steps"].([]any)
+	if !ok || len(steps) != 2 {
+		t.Fatalf("wire steps = %v, want array of 2", wire["steps"])
+	}
+
+	if got := dig(t, steps[0], "timestamp"); got != "2026-01-02T03:04:05Z" {
+		t.Errorf("steps.0.timestamp = %v, want %q", got, "2026-01-02T03:04:05Z")
+	}
+
+	if got := dig(t, steps[1], "step_index"); got != float64(1) {
+		t.Errorf("steps.1.step_index = %v, want 1", got)
+	}
+	if got := dig(t, steps[1], "role"); got != "agent" {
+		t.Errorf("steps.1.role = %v, want %q", got, "agent")
+	}
+	if got := dig(t, steps[1], "content"); got != "on it" {
+		t.Errorf("steps.1.content = %v, want %q", got, "on it")
+	}
+	if got := dig(t, steps[1], "reasoning_content"); got != "thinking hard" {
+		t.Errorf("steps.1.reasoning_content = %v, want %q", got, "thinking hard")
+	}
+
+	calls, ok := dig(t, steps[1], "tool_calls").([]any)
+	if !ok || len(calls) != 2 {
+		t.Fatalf("steps.1.tool_calls = %v, want array of 2", dig(t, steps[1], "tool_calls"))
+	}
+	if got := dig(t, calls[0], "tool_call_id"); got != "call_1_0_read_file" {
+		t.Errorf("tool_calls.0.tool_call_id = %v, want %q", got, "call_1_0_read_file")
+	}
+	if got := dig(t, calls[0], "tool_name"); got != "read_file" {
+		t.Errorf("tool_calls.0.tool_name = %v, want %q", got, "read_file")
+	}
+	if got := dig(t, calls[0], "input", "path"); got != "main.go" {
+		t.Errorf("tool_calls.0.input.path = %v, want %q", got, "main.go")
+	}
+
+	observations, ok := dig(t, steps[1], "observations").([]any)
+	if !ok || len(observations) != 2 {
+		t.Fatalf("steps.1.observations = %v, want array of 2", dig(t, steps[1], "observations"))
+	}
+	if got := dig(t, observations[0], "source_call_id"); got != "call_1_0_read_file" {
+		t.Errorf("observations.0.source_call_id = %v, want %q", got, "call_1_0_read_file")
+	}
+	if got := dig(t, observations[0], "content"); got != "package main" {
+		t.Errorf("observations.0.content = %v, want %q", got, "package main")
+	}
+	if first, ok := observations[0].(map[string]any); !ok {
+		t.Fatalf("observations.0 = %T, want object", observations[0])
+	} else if _, present := first["error"]; present {
+		t.Errorf("observations.0 = %v, want no error key on a content observation", first)
+	}
+	if got := dig(t, observations[1], "source_call_id"); got != "call_1_1_run" {
+		t.Errorf("observations.1.source_call_id = %v, want %q", got, "call_1_1_run")
+	}
+	if got := dig(t, observations[1], "error"); got != "error" {
+		t.Errorf("observations.1.error = %v, want %q", got, "error")
+	}
+	if second, ok := observations[1].(map[string]any); !ok {
+		t.Fatalf("observations.1 = %T, want object", observations[1])
+	} else if _, present := second["content"]; present {
+		t.Errorf("observations.1 = %v, want no content key on an error observation", second)
+	}
+}
+
 func TestOpenTracesEmptyTurnsMarshalsStepsArray(t *testing.T) {
 	payload := serializeOpenTraces(t, schema.Record{RecordID: "rec-empty"})
 	data, err := json.Marshal(payload)
@@ -309,6 +408,18 @@ func TestOpenTracesObservationFallbacks(t *testing.T) {
 			wantError:   "failed",
 		},
 		{
+			name:        "errored status routes to error",
+			call:        schema.ToolCall{Tool: "t", Status: "errored"},
+			wantPresent: true,
+			wantError:   "errored",
+		},
+		{
+			name:        "failure status routes to error",
+			call:        schema.ToolCall{Tool: "t", Status: "failure"},
+			wantPresent: true,
+			wantError:   "failure",
+		},
+		{
 			name:        "failed status routes text into error",
 			call:        schema.ToolCall{Tool: "t", Output: &schema.ToolOutput{Text: "exit 1"}, Status: "failed"},
 			wantPresent: true,
@@ -325,6 +436,19 @@ func TestOpenTracesObservationFallbacks(t *testing.T) {
 			call:        schema.ToolCall{Tool: "t", Output: &schema.ToolOutput{Text: "done"}, Status: "completed"},
 			wantPresent: true,
 			wantContent: "done",
+		},
+		{
+			name:        "ok status stays a content observation",
+			call:        schema.ToolCall{Tool: "t", Output: &schema.ToolOutput{Text: "fine"}, Status: "ok"},
+			wantPresent: true,
+			wantContent: "fine",
+		},
+		{
+			name: "non-nil output with no text still observed",
+			call: schema.ToolCall{Tool: "t", Output: &schema.ToolOutput{Content: []schema.ContentBlock{
+				{Type: "image", Data: "abc"},
+			}}, Status: "success"},
+			wantPresent: true,
 		},
 		{
 			name: "running status without output no observation",
