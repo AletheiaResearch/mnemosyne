@@ -8,6 +8,7 @@ func Registry() []Serializer {
 		ChatML{},
 		Zephyr{},
 		Flat{},
+		OpenTraces{},
 	}
 }
 
