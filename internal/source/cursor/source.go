@@ -281,10 +281,15 @@ func (s *Source) buildRecord(db *sql.DB, entry *sessionEntry) (schema.Record, bo
 
 	record.WorkingDir = entry.workspace
 	record.Grouping = displayLabel(entry.workspace)
+	// The global-state store is only actually read when the composer branch ran
+	// (hasComposer AND the DB opened). A composer whose DB is unavailable at
+	// extract time falls through to the transcript, so it must not be described
+	// as global-state sourced.
+	globalStateUsed := entry.hasComposer && db != nil
 	// SourcePath points at the store the turns actually came from; on a fallback
 	// the turns are the transcript's even though the composer supplied metadata.
 	sourcePath := s.dbPath
-	if !entry.hasComposer || usedTranscriptFallback {
+	if !globalStateUsed || usedTranscriptFallback {
 		sourcePath = entry.transcriptPath
 	}
 	record.Provenance = &schema.Provenance{
@@ -294,7 +299,7 @@ func (s *Source) buildRecord(db *sql.DB, entry *sessionEntry) (schema.Record, bo
 	}
 
 	extensions := make(map[string]any)
-	if entry.hasComposer && entry.transcriptPath != "" {
+	if globalStateUsed && entry.transcriptPath != "" {
 		extensions["stores"] = []string{"global-state", "transcript"}
 	}
 	if entry.isSubagent {
@@ -646,6 +651,12 @@ func isSentinelProjectDir(name string) bool {
 	return name != ""
 }
 
+// resolveEncodedParts walks the dash-separated segments greedily, trying the
+// shortest segment boundary first. Cursor's encoding (every path separator
+// becomes a dash) is inherently lossy — "/a/b-c" and "/a/b/c" encode
+// identically — so when both exist on disk the shortest-boundary match wins.
+// This matches the reference (vibe-replay) decoder; with no information left in
+// the encoded name to disambiguate, on-disk resolution is best-effort.
 func resolveEncodedParts(parts []string, idx int, current string) string {
 	if idx >= len(parts) {
 		if source.DirExists(current) {
@@ -746,10 +757,20 @@ func finalizeUsage(record *schema.Record) {
 	record.Usage.ToolCalls = source.CountToolCalls(record.Turns)
 }
 
+// suppressReasoning strips assistant chain-of-thought. A reasoning-only turn
+// (a standalone thinking bubble) would otherwise become a content-less shell, so
+// such turns are dropped and the usage counts recomputed.
 func suppressReasoning(record *schema.Record) {
+	kept := record.Turns[:0]
 	for i := range record.Turns {
 		record.Turns[i].Reasoning = ""
+		turn := record.Turns[i]
+		if turn.Text != "" || len(turn.ToolCalls) > 0 || len(turn.Attachments) > 0 {
+			kept = append(kept, turn)
+		}
 	}
+	record.Turns = kept
+	finalizeUsage(record)
 }
 
 func sortedIDs(index map[string]*sessionEntry) []string {
