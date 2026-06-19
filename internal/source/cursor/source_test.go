@@ -25,6 +25,7 @@ type composerSpec struct {
 	ID               string
 	Name             string // composer.name -> Title
 	ModelName        string // composer.modelConfig.modelName -> Model
+	SelectedModelID  string // composer.modelConfig.selectedModels[0].modelId (when ModelName unset)
 	CreatedAt        int64  // composer.createdAt (epoch ms) -> StartedAt
 	Headers          []string
 	Workspace        string // adds workspaceUris to every bubble when set
@@ -61,6 +62,10 @@ func buildCursorDB(t *testing.T, composers []composerSpec) string {
 		}
 		if comp.ModelName != "" {
 			composerData["modelConfig"] = map[string]any{"modelName": comp.ModelName}
+		} else if comp.SelectedModelID != "" {
+			composerData["modelConfig"] = map[string]any{
+				"selectedModels": []map[string]any{{"modelId": comp.SelectedModelID}},
+			}
 		}
 		if comp.CreatedAt != 0 {
 			composerData["createdAt"] = comp.CreatedAt
@@ -783,8 +788,193 @@ func TestDecodeProjectSentinelBucketsUnknown(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Reasoning suppression, provenance, decoding edge paths
+// ---------------------------------------------------------------------------
+
+func TestExtractSuppressReasoningDropsReasoningOnlyTurns(t *testing.T) {
+	t.Parallel()
+	dbPath := buildCursorDB(t, []composerSpec{
+		{
+			ID:           "c1",
+			WorkspaceURI: "file:///home/user/repo",
+			Headers:      []string{"b1", "b2", "b3"},
+			Bubbles: []bubbleSpec{
+				{ID: "b1", Payload: map[string]any{"type": float64(1), "text": "hi"}},
+				// reasoning-only assistant bubble -> becomes an empty shell once suppressed
+				{ID: "b2", Payload: map[string]any{"type": float64(2), "thinking": map[string]any{"text": "only reasoning"}}},
+				{ID: "b3", Payload: map[string]any{"type": float64(2), "text": "answer", "thinking": map[string]any{"text": "some reasoning"}}},
+			},
+		},
+	})
+	src := newTestSource(dbPath, filepath.Join(t.TempDir(), "noprojects"))
+	groupings, err := src.Discover(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec schema.Record
+	for _, g := range groupings {
+		if err := src.Extract(t.Context(), g, source.ExtractionContext{SuppressReasoning: true}, func(r schema.Record) error {
+			rec = r
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, turn := range rec.Turns {
+		if turn.Reasoning != "" {
+			t.Fatalf("reasoning not suppressed: %+v", turn)
+		}
+		if turn.Text == "" && len(turn.ToolCalls) == 0 {
+			t.Fatalf("content-less shell turn survived suppression: %+v", turn)
+		}
+	}
+	// b2 (reasoning-only) is dropped; usage recomputed to 1 user + 1 assistant.
+	if rec.Usage.UserTurns != 1 || rec.Usage.AssistantTurns != 1 {
+		t.Fatalf("usage after suppression = %+v", rec.Usage)
+	}
+}
+
+func TestNewUsesDefaultRootsWhenDBPathEmpty(t *testing.T) {
+	t.Parallel()
+	src := New("")
+	if src.dbPath == "" || src.projectsRoot == "" {
+		t.Fatalf("defaults not populated: dbPath=%q projectsRoot=%q", src.dbPath, src.projectsRoot)
+	}
+	if custom := New("/tmp/custom.vscdb"); custom.dbPath != "/tmp/custom.vscdb" {
+		t.Fatalf("explicit dbPath = %q", custom.dbPath)
+	}
+}
+
+// Greptile P2: when a composer exists but the DB is unavailable at extract time,
+// the turns come entirely from the transcript, so provenance must point at the
+// transcript and not claim global-state was read.
+func TestBuildRecordComposerWithoutDBUsesTranscriptProvenance(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	path := writeTranscript(t, root, "home-user-repo", "s1", true, []map[string]any{
+		tLine("user", tText("hi")),
+		tLine("assistant", tText("hello")),
+	})
+	src := newTestSource(filepath.Join(t.TempDir(), "none.vscdb"), root)
+	entry := &sessionEntry{id: "s1", hasComposer: true, transcriptPath: path, workspace: "/home/user/repo"}
+
+	rec, ok := src.buildRecord(nil, entry)
+	if !ok {
+		t.Fatalf("expected a record from the transcript")
+	}
+	if rec.Provenance.SourcePath != path {
+		t.Fatalf("SourcePath should be the transcript when the DB is nil, got %q", rec.Provenance.SourcePath)
+	}
+	if _, hasStores := rec.Provenance.Extensions["stores"]; hasStores {
+		t.Fatalf("stores must not claim global-state when the DB was not read: %+v", rec.Provenance.Extensions)
+	}
+}
+
+func TestGlobalStateUnwrapsToolParamsSelectedModelAndBubbleWorkspace(t *testing.T) {
+	t.Parallel()
+	dbPath := buildCursorDB(t, []composerSpec{
+		{
+			ID:              "c1",
+			SelectedModelID: "gpt-5-codex",     // modelConfig.selectedModels (no modelName)
+			Workspace:       "/home/user/repo", // stamps workspaceUris on bubbles -> composerWorkspace fallback
+			Headers:         []string{"b1", "b2", "b3"},
+			Bubbles: []bubbleSpec{
+				{ID: "b1", Payload: map[string]any{"type": float64(1), "text": "go"}},
+				{ID: "b2", Payload: map[string]any{"type": float64(2), "toolFormerData": map[string]any{
+					"name":   "mcp-filesystem-read_file",
+					"status": "completed",
+					"params": `{"tools":[{"parameters":{"path":"main.go"}}]}`,
+					"result": `{"content":"x"}`,
+				}}},
+				// An unknown bubble type (neither user nor assistant) is dropped.
+				{ID: "b3", Payload: map[string]any{"type": float64(3), "text": "ignored"}},
+			},
+		},
+	})
+	src := newTestSource(dbPath, filepath.Join(t.TempDir(), "noprojects"))
+	rec, ok := recordByID(extractAll(t, src), "c1")
+	if !ok {
+		t.Fatalf("missing c1")
+	}
+	if rec.Model != "gpt-5-codex" {
+		t.Fatalf("model from selectedModels = %q", rec.Model)
+	}
+	if rec.WorkingDir != "/home/user/repo" {
+		t.Fatalf("workspace from bubble workspaceUris = %q", rec.WorkingDir)
+	}
+	var call *schema.ToolCall
+	for i := range rec.Turns {
+		for j := range rec.Turns[i].ToolCalls {
+			call = &rec.Turns[i].ToolCalls[j]
+		}
+	}
+	if call == nil {
+		t.Fatalf("no tool call found: %+v", rec.Turns)
+	}
+	if call.Tool != "read_file" {
+		t.Fatalf("tool name (mcp_ prefix) = %q", call.Tool)
+	}
+	params, ok := call.Input.(map[string]any)
+	if !ok || params["path"] != "main.go" {
+		t.Fatalf("unwrapped tool params = %+v", call.Input)
+	}
+}
+
+func TestTranscriptThinkingBlockBecomesReasoning(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeTranscript(t, root, "home-user-repo", "t1", true, []map[string]any{
+		tLine("user", tText("hi")),
+		tLine("assistant", map[string]any{"type": "thinking", "thinking": "pondering"}, tText("answer")),
+	})
+	src := newTestSource(filepath.Join(t.TempDir(), "none.vscdb"), root)
+	rec, ok := recordByID(extractAll(t, src), "t1")
+	if !ok {
+		t.Fatalf("missing t1")
+	}
+	asst := rec.Turns[1]
+	if asst.Reasoning != "pondering" {
+		t.Fatalf("reasoning = %q", asst.Reasoning)
+	}
+	if asst.Text != "answer" {
+		t.Fatalf("text = %q", asst.Text)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Helper unit tests (retained from the original suite)
 // ---------------------------------------------------------------------------
+
+func TestHelperEdgeCases(t *testing.T) {
+	t.Parallel()
+	if bubbleRole(3) != "" {
+		t.Fatalf("unknown bubble type should map to no role")
+	}
+	if normalizeTranscriptRole("system") != "" {
+		t.Fatalf("non user/assistant role should map to empty")
+	}
+	if got := appendText("a", "b"); got != "a\nb" {
+		t.Fatalf("appendText join = %q", got)
+	}
+	if got := normalizeCursorPayload(float64(42)); got != float64(42) {
+		t.Fatalf("non-string payload should pass through, got %v", got)
+	}
+	if got := unwrapCursorToolParameters(map[string]any{"x": float64(1)}); got.(map[string]any)["x"] != float64(1) {
+		t.Fatalf("payload without tools should pass through, got %+v", got)
+	}
+	if _, ok := unwrapCursorToolParameters(map[string]any{"tools": []any{map[string]any{}}}).(map[string]any); !ok {
+		t.Fatalf("tools without parameters should return the payload")
+	}
+	if decodeProjectDir("") != "" {
+		t.Fatalf("empty encoded name should decode to empty")
+	}
+	if !isSentinelProjectDir("1778089727984") {
+		t.Fatalf("all-numeric window id should be a sentinel")
+	}
+	if isSentinelProjectDir("Users-quantumly-repo") {
+		t.Fatalf("a real path-like name must not be a sentinel")
+	}
+}
 
 func TestNormalizeCursorToolNameHandlesMcpPrefixes(t *testing.T) {
 	t.Parallel()
