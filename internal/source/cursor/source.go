@@ -494,8 +494,8 @@ func (s *Source) loadBubble(db *sql.DB, composerID, bubbleID string) (map[string
 // scans every header bubble rather than capping at the first five.
 func (s *Source) composerWorkspace(db *sql.DB, composerID string, composer map[string]any) string {
 	if wi := source.ExtractMap(composer, "workspaceIdentifier"); wi != nil {
-		if uri := source.ExtractString(wi, "uri"); uri != "" {
-			return uriToPath(uri)
+		if path := workspaceURIToPath(wi["uri"]); path != "" {
+			return path
 		}
 	}
 	for _, bubbleID := range composerHeaderIDs(composer) {
@@ -504,12 +504,30 @@ func (s *Source) composerWorkspace(db *sql.DB, composerID string, composer map[s
 			continue
 		}
 		for _, item := range source.ExtractSlice(bubble, "workspaceUris") {
-			if uri, ok := item.(string); ok && uri != "" {
-				return uriToPath(uri)
+			if path := workspaceURIToPath(item); path != "" {
+				return path
 			}
 		}
 	}
 	return ""
+}
+
+// workspaceURIToPath extracts a filesystem path from a Cursor workspace URI.
+// On real builds these are serialized VS Code URI objects
+// ({scheme, path, fsPath, ...}); older/remote shapes use a plain "file://"
+// string. Cursor does not percent-encode these, so no URL unescaping is needed.
+func workspaceURIToPath(value any) string {
+	switch uri := value.(type) {
+	case string:
+		return uriToPath(uri)
+	case map[string]any:
+		return source.FirstNonEmpty(
+			source.ExtractString(uri, "fsPath"),
+			source.ExtractString(uri, "path"),
+		)
+	default:
+		return ""
+	}
 }
 
 // ---------------------------------------------------------------------------

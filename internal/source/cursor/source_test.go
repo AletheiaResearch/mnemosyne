@@ -29,7 +29,8 @@ type composerSpec struct {
 	CreatedAt        int64  // composer.createdAt (epoch ms) -> StartedAt
 	Headers          []string
 	Workspace        string // adds workspaceUris to every bubble when set
-	WorkspaceURI     string // composer.workspaceIdentifier.uri when set
+	WorkspaceURI     string // composer.workspaceIdentifier.uri as a "file://" string
+	WorkspaceURIPath string // composer.workspaceIdentifier.uri as a VS Code URI object
 	Bubbles          []bubbleSpec
 	Empty            bool   // emit composerData with no headers (a draft/subagent)
 	Subagent         bool   // emit composer.subagentInfo (marks a sub-agent session)
@@ -72,6 +73,10 @@ func buildCursorDB(t *testing.T, composers []composerSpec) string {
 		}
 		if comp.WorkspaceURI != "" {
 			composerData["workspaceIdentifier"] = map[string]any{"uri": comp.WorkspaceURI}
+		} else if comp.WorkspaceURIPath != "" {
+			composerData["workspaceIdentifier"] = map[string]any{"uri": map[string]any{
+				"scheme": "file", "path": comp.WorkspaceURIPath, "fsPath": comp.WorkspaceURIPath,
+			}}
 		}
 		if comp.Subagent {
 			info := map[string]any{"subagentTypeName": "search"}
@@ -920,6 +925,28 @@ func TestGlobalStateUnwrapsToolParamsSelectedModelAndBubbleWorkspace(t *testing.
 	}
 }
 
+// On real builds workspaceIdentifier.uri is a serialized VS Code URI object,
+// not a "file://" string; the composer-only workspace fallback must read it.
+func TestComposerWorkspaceFromURIObject(t *testing.T) {
+	t.Parallel()
+	dbPath := buildCursorDB(t, []composerSpec{
+		{
+			ID:               "obj",
+			WorkspaceURIPath: "/home/user/repo",
+			Headers:          []string{"b1"},
+			Bubbles:          []bubbleSpec{{ID: "b1", Payload: map[string]any{"type": float64(1), "text": "hi"}}},
+		},
+	})
+	src := newTestSource(dbPath, filepath.Join(t.TempDir(), "noprojects"))
+	rec, ok := recordByID(extractAll(t, src), "obj")
+	if !ok {
+		t.Fatalf("missing obj record")
+	}
+	if rec.WorkingDir != "/home/user/repo" {
+		t.Fatalf("workspace from URI object = %q", rec.WorkingDir)
+	}
+}
+
 func TestTranscriptThinkingBlockBecomesReasoning(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -973,6 +1000,15 @@ func TestHelperEdgeCases(t *testing.T) {
 	}
 	if isSentinelProjectDir("Users-quantumly-repo") {
 		t.Fatalf("a real path-like name must not be a sentinel")
+	}
+	if got := workspaceURIToPath("file:///x"); got != "/x" {
+		t.Fatalf("string URI -> %q", got)
+	}
+	if got := workspaceURIToPath(map[string]any{"path": "/p", "fsPath": "/fs"}); got != "/fs" {
+		t.Fatalf("URI object should prefer fsPath, got %q", got)
+	}
+	if got := workspaceURIToPath(float64(3)); got != "" {
+		t.Fatalf("non-string/non-object URI -> %q", got)
 	}
 }
 
